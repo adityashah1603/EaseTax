@@ -7,6 +7,7 @@ import { api, upload } from '../api/client';
 import { useInvalidateAll, useQuestions, useSummary } from '../api/hooks';
 import { useFilingStatus, type FilingResult } from '../api/workflowHooks';
 import { QuestionCard } from '../components/trace/sections';
+import { ClientInboxSection } from '../components/workflow/InboxWidget';
 import { ErrorBox, Loading } from '../components/ui';
 import { fmtDate, fmtDateTime, fmtNum, humanize } from '../lib/format';
 import { useSession } from '../state/session';
@@ -30,6 +31,8 @@ export function ClientPortal() {
     <div className="mx-auto max-w-[860px] px-6 py-6">
       <h1 className="font-serif text-2xl font-semibold">Hello, {actor?.name.split(' ')[0]}</h1>
       <p className="mb-5 text-sm text-graphite">Your {s?.taxYear ?? ''} return with Miraflores. Answer open questions and send any missing documents here.</p>
+
+      <ClientInboxSection />
 
       <section className="mb-6 rounded border border-rule bg-panel p-4">
         <h2 className="mb-2 text-sm font-semibold text-graphite">Where your return stands</h2>
