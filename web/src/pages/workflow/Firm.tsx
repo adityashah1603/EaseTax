@@ -57,8 +57,10 @@ function StatusOverview() {
   const s = summary.data?.status;
   const r = readiness.data;
   const f = filing.data;
-  const logged = (areas.data ?? []).reduce((t, a) => t + a.loggedHours, 0);
-  const budget = (areas.data ?? []).reduce((t, a) => t + (a.budgetHours ?? 0), 0);
+  // All engagement budget lines, including phases that aren't review areas (W4).
+  const lines = useBudgetLines();
+  const logged = lines.reduce((t, a) => t + a.loggedHours, 0);
+  const budget = lines.reduce((t, a) => t + (a.budgetHours ?? 0), 0);
   const stage = !f ? '…' : f.filed ? 'Filed' : f.submissions.some((x) => x.status === 'pending') ? 'Awaiting agency' : f.submissions.length ? 'Rejected: resubmit' : r?.ready ? 'Ready to file' : 'In preparation';
   return (
     <Panel title="Status" sub={summary.data ? `${summary.data.name} · engine ${summary.data.currentVersion}` : undefined} right={<Pill tone={f?.filed ? 'ok' : 'info'}>{stage}</Pill>}>
@@ -80,8 +82,14 @@ function StatusOverview() {
   );
 }
 
+/** Budget lines from the firm dashboard (areas and engagement phases), with hours logged. */
+function useBudgetLines() {
+  return useFirmDashboard().data?.budget ?? [];
+}
+
 function TimePanel() {
-  const areas = useAreas();
+  const areas = { isLoading: false };
+  const lines = useBudgetLines();
   const { time } = useWorkLog();
   const { nameOf } = useSession();
   const gate = useRoleGate(['preparer', 'reviewer', 'partner', 'quality_reviewer'], 'log time');
@@ -89,7 +97,7 @@ function TimePanel() {
   const [area, setArea] = useState('');
   const [hours, setHours] = useState('');
   const [note, setNote] = useState('');
-  const list = areas.data ?? [];
+  const list = lines.map((l) => ({ id: l.area, title: l.title, isArea: l.isArea, budgetHours: l.budgetHours ?? undefined, loggedHours: l.loggedHours }));
   const chosen = area || list[0]?.id || '';
   return (
     <Panel title="Time against budget" sub="Budget hours by area come from the firm's engagement budget.">
@@ -103,9 +111,15 @@ function TimePanel() {
             const over = b !== undefined && a.loggedHours > b;
             return (
               <li key={a.id} className="grid grid-cols-[minmax(0,1fr)_120px_70px] items-center gap-2 text-sm">
-                <Link to={`/areas/${a.id}`} className="truncate hover:underline">
-                  {a.title}
-                </Link>
+                {a.isArea ? (
+                  <Link to={`/areas/${a.id}`} className="truncate hover:underline">
+                    {a.title}
+                  </Link>
+                ) : (
+                  <span className="truncate" title="Engagement phase, not a review area">
+                    {a.title}
+                  </span>
+                )}
                 <span className="h-2 overflow-hidden rounded bg-ruleSoft" title={b === undefined ? 'No budget for this area' : `${a.loggedHours} of ${b} hours`}>
                   <span className={clsx('block h-full', over ? 'bg-pencil' : 'bg-ledger')} style={{ width: `${b ? Math.max(pct, a.loggedHours ? 3 : 0) : 0}%` }} />
                 </span>

@@ -20,7 +20,8 @@ registerCheck({
   family: 'variance',
   run(ctx) {
     const out: CheckIssue[] = [];
-    const rule = ctx.b.packet.firm.starter_standards.variance_review;
+    // The firm's standards as edited by the administrator (falls back to the packet's starting set).
+    const rule = ((ctx.state.standards as { variance_review?: typeof ctx.b.packet.firm.starter_standards.variance_review } | null)?.variance_review) ?? ctx.b.packet.firm.starter_standards.variance_review;
     const py = ctx.b.packet.prior_years.return_2024;
     if (!rule || !py || rule.compare_to !== 'prior_year') return out;
     const pyLines: Record<string, unknown> = py.lines ?? {};

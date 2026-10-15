@@ -32,7 +32,10 @@ export function fmtSigned(n: number): string {
 
 export function fmtDate(iso: string | undefined | null): string {
   if (!iso) return '—';
-  const d = new Date(iso);
+  // "2026-04-15" is a calendar date. new Date() would read it as midnight UTC, which is the
+  // evening of the 14th west of Greenwich (W1); build it in local time instead.
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const d = ymd ? new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3])) : new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }

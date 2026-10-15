@@ -84,7 +84,11 @@ export const useFirmDashboard = () =>
     queryKey: ['firm-dashboard'],
     queryFn: async () => {
       try {
-        return await api<{ deadlines?: { what: string; date: string }[] }>('/api/firm/dashboard');
+        return await api<{
+          deadlines?: { what: string; date: string }[];
+          /** Every engagement budget line: review areas and phases such as intake and partner review (W4). */
+          budget?: { area: string; title: string; isArea: boolean; budgetHours: number | null; loggedHours: number }[];
+        }>('/api/firm/dashboard');
       } catch (e) {
         if (e instanceof ApiFailure && e.status === 404) return null;
         throw e;

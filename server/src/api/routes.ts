@@ -314,7 +314,7 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     return {
       deadlines: f.deadlines,
       assignmentAtStart: f.assignment_at_start,
-      budget: wp.areas().map((x) => ({ area: x.id, title: x.title, budgetHours: x.budgetHours ?? 0, loggedHours: x.loggedHours })),
+      budget: wp.budgetLines(),
       status: s.status,
       openAssignments: [...wp.state.assignments.values()].filter((x) => !x.done),
     };
@@ -329,6 +329,7 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     assertCan(a, 'log_time');
     const b = req.body as { area: string; hours: number; note?: string };
     if (!(b.hours > 0 && b.hours <= 24)) throw new PolicyError('Hours must be between 0 and 24', 'invalid');
+    if (!wp.budgetLines().some((l) => l.area === b.area)) throw new PolicyError(`Unknown budget line ${b.area}`, 'invalid');
     return ok(wp.commit(a, [{ type: 'time.logged', payload: b }]));
   });
 

@@ -461,6 +461,23 @@ export class Workpaper {
     });
   }
 
+  /**
+   * Time budget lines: the review areas plus engagement phases the firm budgets that aren't
+   * areas of the return (e.g. intake & engagement, partner review). Order: areas, then phases.
+   */
+  budgetLines(): { area: string; title: string; isArea: boolean; budgetHours: number | null; loggedHours: number }[] {
+    const budget = this.b.packet.firm.budget_hours;
+    const logged = (id: string) => this.state.time.filter((t) => t.area === id).reduce((s, t) => s + t.hours, 0);
+    const areaIds = new Set(AREAS.map((a) => a.id));
+    const humanize = (k: string) => k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()).replace(/ and /g, ' & ');
+    return [
+      ...AREAS.map((a) => ({ area: a.id, title: a.title, isArea: true, budgetHours: budget[a.id] ?? null, loggedHours: logged(a.id) })),
+      ...Object.keys(budget)
+        .filter((k) => !areaIds.has(k))
+        .map((k) => ({ area: k, title: humanize(k), isArea: false, budgetHours: budget[k]!, loggedHours: logged(k) })),
+    ];
+  }
+
   /** Lines in a version that cite any extracted value from the document. */
   private landingsOf(docIdRaw: string, version = this.version) {
     const evs = this.b.evsByDoc.get(docIdRaw) ?? [];

@@ -170,3 +170,21 @@ describe('a judgment closes the issues it answers (D-53)', () => {
     expect(open(dd)).toBeDefined();
   });
 });
+
+describe('walkthrough bug fixes', () => {
+  it('W4: budget lines include engagement phases and total the firm budget (22 h)', () => {
+    const lines = wp.budgetLines();
+    const total = lines.reduce((t, l) => t + (l.budgetHours ?? 0), 0);
+    expect(total).toBe(Object.values(baseline.packet.firm.budget_hours).reduce((a, b) => a + b, 0));
+    expect(total).toBe(22);
+    expect(lines.find((l) => l.area === 'partner_review')).toMatchObject({ isArea: false, budgetHours: 1 });
+  });
+
+  it('variance check follows the firm standards as edited', () => {
+    const count = () => wp.issues().filter((i) => i.id.startsWith('chk:var.')).length;
+    const before = count();
+    const std = baseline.packet.firm.starter_standards;
+    wp.commit(A('st-05'), [{ type: 'firm.standards_updated', payload: { standards: { ...std, variance_review: { ...std.variance_review, flag_if_change_over_percent: 1000, and_over_amount: 1_000_000 } } } }]);
+    expect(count()).toBeLessThan(before);
+  });
+});
