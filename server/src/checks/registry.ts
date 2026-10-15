@@ -35,7 +35,9 @@ export interface Check {
     | 'variance'
     | 'scope'
     | 'completeness'
-    | 'recalc';
+    | 'recalc'
+    | 'state_split'
+    | 'judgment';
   run(ctx: CheckContext): CheckIssue[];
 }
 
