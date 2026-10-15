@@ -1,0 +1,7 @@
+Case_Study_Redesign_the_Tax_Workpaper.pdf
+design/
+node_modules/
+dist/
+var/
+*.log
+.env
