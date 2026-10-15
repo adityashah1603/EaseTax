@@ -1,13 +1,14 @@
 // What a client sees: where the return stands, the firm's questions, uploads, approval.
 // No workpaper internals: the API scopes questions to the client and masks sensitive data.
 import type { CommandResult } from '@easetax/shared';
-import { Upload } from 'lucide-react';
+import { CheckCircle2, PenLine, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { upload } from '../api/client';
-import { useQuestions, useSummary } from '../api/hooks';
+import { api, upload } from '../api/client';
+import { useInvalidateAll, useQuestions, useSummary } from '../api/hooks';
+import { useFilingStatus, type FilingResult } from '../api/workflowHooks';
 import { QuestionCard } from '../components/trace/sections';
 import { ErrorBox, Loading } from '../components/ui';
-import { fmtDate, fmtNum } from '../lib/format';
+import { fmtDate, fmtDateTime, fmtNum, humanize } from '../lib/format';
 import { useSession } from '../state/session';
 import { useToast } from '../state/toast';
 
@@ -102,13 +103,134 @@ export function ClientPortal() {
         </div>
       </section>
 
-      <section className="rounded border border-rule bg-panel p-4">
-        <h2 className="mb-1 text-sm font-semibold text-graphite">Approve and sign (Form 8879)</h2>
-        <p className="mb-2 text-sm text-graphite">You'll be able to review the final return and sign here once your preparer and partner have signed off.</p>
-        <button className="btn" disabled>
-          Approve return
-        </button>
-      </section>
+      <ApproveAndSign />
     </div>
+  );
+}
+
+/**
+ * Form 8879 / FTB 8879: the client approves the return and signs with a 5-digit PIN per signer.
+ * The PINs go to the server once and are never shown again or kept here: the server stores a
+ * salted hash tied to the return as approved, and the approval goes stale if the return changes.
+ */
+function ApproveAndSign() {
+  const { actors, actor, nameOf } = useSession();
+  const status = useFilingStatus();
+  const invalidate = useInvalidateAll();
+  const toast = useToast();
+  const signers = actors.filter((a) => a.kind === 'client');
+  const [pins, setPins] = useState<Record<string, string>>({});
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const [signing, setSigning] = useState(false);
+  const st = status.data;
+  const ap = st?.clientApproval;
+  const valid = signers.length > 0 && signers.every((s) => /^\d{5}$/.test(pins[s.id] ?? '')) && consent;
+  const accepted = st?.submissions.filter((s) => s.status === 'accepted') ?? [];
+
+  const sign = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api<FilingResult>('/api/filing/client-approval', { method: 'POST', body: { pins, consent: true } });
+      toast.push({ tone: 'ok', text: 'Thank you. Your approval and e-file signature are recorded.' });
+      setSigning(false);
+      invalidate();
+    } catch (x) {
+      setErr(x);
+    } finally {
+      // Never keep the PINs around, whatever happened.
+      setPins({});
+      setConsent(false);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="rounded border border-rule bg-panel p-4">
+      <h2 className="mb-1 text-sm font-semibold text-graphite">Approve and sign (Form 8879 and FTB 8879)</h2>
+      {status.isLoading ? (
+        <Loading />
+      ) : (
+        <>
+          {st?.filed ? (
+            <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-ledger-ink">
+              <CheckCircle2 size={16} /> Your return has been filed and accepted by the IRS and the Franchise Tax Board.
+            </p>
+          ) : accepted.length > 0 ? (
+            <p className="mb-2 text-sm text-graphite">Accepted so far: {accepted.map((s) => humanize(s.jurisdiction)).join(', ')}.</p>
+          ) : null}
+          {ap ? (
+            ap.current ? (
+              <div className="mb-2 rounded border border-ledger/40 bg-ledger-soft px-3 py-2 text-sm text-ledger-ink">
+                Approved and signed by {nameOf(ap.by)} on {fmtDateTime(ap.at)}. Signers: {Object.keys(ap.pins).map(nameOf).join(' and ')}.
+                <span className="block text-xs">Your preparer may now file the return exactly as you approved it.</span>
+              </div>
+            ) : (
+              <div className="mb-2 rounded border border-amber bg-amber-soft px-3 py-2 text-sm text-amber-ink">
+                <span className="font-semibold">Your approval needs renewing.</span> You approved on {fmtDateTime(ap.at)}, but the return changed afterwards, so that approval no longer
+                covers it. Please review the figures above and sign again.
+              </div>
+            )
+          ) : (
+            <p className="mb-2 text-sm text-graphite">When you're happy with the figures above, approve the return and sign the e-file authorization with your PINs.</p>
+          )}
+          {!st?.filed && !signing && (
+            <button className="btn-primary" onClick={() => (setErr(null), setSigning(true))} disabled={actor?.kind !== 'client'}>
+              <PenLine size={14} /> {ap ? (ap.current ? 'Sign again' : 'Review and sign again') : 'Approve and sign'}
+            </button>
+          )}
+          {signing && (
+            <form
+              className="mt-2 rounded border border-rule bg-paper p-3"
+              autoComplete="off"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (valid) sign();
+              }}
+            >
+              <p className="mb-2 text-xs text-graphite">
+                Each signer chooses a five-digit PIN. It is your electronic signature on Form 8879 and FTB 8879. We don't keep the PIN itself.
+              </p>
+              <div className="mb-2 grid gap-3 sm:grid-cols-2">
+                {signers.map((s) => (
+                  <label key={s.id} className="block">
+                    <span className="mb-1 block text-xs font-semibold text-graphite">{s.name}'s PIN</span>
+                    <input
+                      className="input num tracking-[0.3em]"
+                      type="password"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      maxLength={5}
+                      value={pins[s.id] ?? ''}
+                      onChange={(e) => setPins((p) => ({ ...p, [s.id]: e.target.value.replace(/\D/g, '').slice(0, 5) }))}
+                      aria-label={`${s.name} e-file PIN`}
+                    />
+                  </label>
+                ))}
+              </div>
+              <label className="mb-2 flex items-start gap-2 text-sm">
+                <input type="checkbox" className="mt-1" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+                <span>
+                  Under penalties of perjury, we declare that we have examined this return and to the best of our knowledge it is true, correct and complete. We authorize Miraflores
+                  to file it electronically.
+                </span>
+              </label>
+              <ErrorBox error={err} />
+              <div className="mt-2 flex gap-2">
+                <button className="btn-primary" disabled={!valid || busy}>
+                  {busy ? 'Signing…' : 'Approve and sign'}
+                </button>
+                <button type="button" className="btn" onClick={() => (setSigning(false), setPins({}), setConsent(false))}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+          {err && !signing ? <ErrorBox error={err} /> : null}
+        </>
+      )}
+    </section>
   );
 }

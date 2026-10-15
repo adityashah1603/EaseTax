@@ -2,6 +2,7 @@
 // SSE stream reports committed events, so all screens stay live without polling.
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  AdjustmentDto,
   AreaDto,
   CommandResult,
   DocumentDetailDto,
@@ -20,6 +21,7 @@ import type {
 } from '@easetax/shared';
 import { useMemo } from 'react';
 import { api, enc } from './client';
+import { useReplayAt } from '../components/workflow/replayClock';
 
 export interface FirmStandards {
   verification_types: string[];
@@ -38,7 +40,11 @@ export const useIssues = () => useQuery({ queryKey: ['issues'], queryFn: () => a
 export const useNotes = () => useQuery({ queryKey: ['notes'], queryFn: () => api<ReviewNoteDto[]>('/api/notes') });
 export const useQuestions = () => useQuery({ queryKey: ['questions'], queryFn: () => api<QuestionDto[]>('/api/questions') });
 export const useSignoffs = () => useQuery({ queryKey: ['signoffs'], queryFn: () => api<SignoffDto[]>('/api/signoffs') });
-export const useDocuments = () => useQuery({ queryKey: ['documents'], queryFn: () => api<DocumentDto[]>('/api/documents') });
+/** Documents on file. Under the replay clock (D-13) only those received by then. */
+export function useDocuments() {
+  const asOf = useReplayAt();
+  return useQuery({ queryKey: ['documents', asOf], queryFn: () => api<DocumentDto[]>(`/api/documents${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ''}`) });
+}
 export const useDocument = (id: string | undefined) =>
   useQuery({ queryKey: ['document', id], queryFn: () => api<DocumentDetailDto>(`/api/documents/${id}`), enabled: !!id, staleTime: 30_000 });
 export const useNode = (id: string | undefined | null) =>
@@ -89,48 +95,14 @@ export function useAreaIndex() {
   }, [areas.data, stamp, ready]);
 }
 
-/** Pending partner approvals. No list endpoint exists, so fold the event log (see report). */
-export interface PendingAdjustment {
-  adjustmentId: string;
-  nodeId: string;
-  originalValue: unknown;
-  newValue: unknown;
-  by: string;
-  at: string;
-  reason?: string;
-  effect: NonNullable<WorkEvent<'adjustment.proposed'>['payload']>['effect'];
-}
+/** Adjustments by status; `proposed` ones wait for a partner (the partner queue). */
+export const useAdjustments = (status?: AdjustmentDto['status']) =>
+  useQuery({ queryKey: ['adjustments', status ?? 'all'], queryFn: () => api<AdjustmentDto[]>(`/api/adjustments${status ? `?status=${status}` : ''}`) });
 
-export function usePendingAdjustments() {
-  const events = useEvents();
-  return useMemo(() => {
-    const evs = events.data ?? [];
-    const undone = new Set<string>();
-    for (const e of evs) if (e.type === 'events.undone') for (const id of (e.payload as WorkEvent<'events.undone'>['payload']).eventIds) undone.add(id);
-    const pending = new Map<string, PendingAdjustment>();
-    for (const e of evs) {
-      if (undone.has(e.id)) continue;
-      if (e.type === 'adjustment.proposed') {
-        const p = e.payload as WorkEvent<'adjustment.proposed'>['payload'];
-        if (p.requiresPartner)
-          pending.set(p.adjustmentId, { adjustmentId: p.adjustmentId, nodeId: p.nodeId, originalValue: p.originalValue, newValue: p.newValue, by: e.actor, at: e.at, reason: e.reason, effect: p.effect });
-      } else if (e.type === 'adjustment.approved' || e.type === 'adjustment.rejected' || e.type === 'adjustment.reverted') {
-        pending.delete((e.payload as { adjustmentId: string }).adjustmentId);
-      }
-    }
-    return [...pending.values()];
-  }, [events.data]);
-}
-
-/**
- * Commands answer { ok, seq } but not the batch id, which undo needs. Read back the
- * events just written to recover it (see report: the API should return batchId).
- */
-export async function undoTargetFor(result: CommandResult, count: number): Promise<{ batchId?: string; eventId?: string } | null> {
-  const evs = await api<WorkEvent[]>(`/api/events?after=${Math.max(0, result.seq - count)}`);
-  const last = evs.find((e) => e.seq === result.seq);
-  if (!last) return null;
-  return last.batchId ? { batchId: last.batchId } : { eventId: last.id };
+/** What POST /api/undo needs to reverse a command: its batch, else its event(s). */
+export function undoTargetsFor(result: CommandResult): { batchId?: string; eventId?: string }[] {
+  if (result.batchId) return [{ batchId: result.batchId }];
+  return (result.eventIds ?? []).map((eventId) => ({ eventId }));
 }
 
 export function useInvalidateAll() {

@@ -3,30 +3,28 @@
 import type { CommandResult, NodeSummary } from '@easetax/shared';
 import { useState } from 'react';
 import { api, enc, upload } from '../api/client';
-import { undoTargetFor, useInvalidateAll, useSearch, useStandards } from '../api/hooks';
+import { undoTargetsFor, useInvalidateAll, useSearch, useStandards } from '../api/hooks';
 import { humanize, fmtValue } from '../lib/format';
 import { takePrefill } from '../state/drawer';
 import { useSession } from '../state/session';
 import { useToast } from '../state/toast';
 import { ErrorBox, Field, Modal } from './ui';
 
-/** Run a command, refresh, and offer Undo for the events it wrote. */
+/** Run a command, refresh, and offer Undo for the events it wrote (its batchId, else its event ids). */
 export function useCommand() {
   const toast = useToast();
   const invalidate = useInvalidateAll();
   const { can } = useSession();
-  return async function run(fn: () => Promise<CommandResult>, opts: { done: string; eventCount?: number; undoable?: boolean }) {
+  return async function run(fn: () => Promise<CommandResult>, opts: { done: string; undoable?: boolean }) {
     const res = await fn();
     invalidate();
     let undo: (() => Promise<unknown>) | undefined;
-    if (opts.undoable !== false && can('undo')) {
-      const target = await undoTargetFor(res, opts.eventCount ?? 1).catch(() => null);
-      if (target)
-        undo = async () => {
-          await api('/api/undo', { method: 'POST', body: target });
-          invalidate();
-        };
-    }
+    const targets = undoTargetsFor(res);
+    if (opts.undoable !== false && can('undo') && targets.length)
+      undo = async () => {
+        for (const target of targets) await api('/api/undo', { method: 'POST', body: target });
+        invalidate();
+      };
     toast.push({ tone: 'ok', text: opts.done, undo });
     return res;
   };
@@ -67,7 +65,6 @@ export function VerifyDialog({ nodeIds, onClose, label }: { nodeIds: string[]; o
           const ok = await s.go(() =>
             run(() => api<CommandResult>('/api/verifications', { method: 'POST', body: { nodeIds, type: chosen, note: note || undefined } }), {
               done: nodeIds.length > 1 ? `Verified ${nodeIds.length} items as ${humanize(chosen).toLowerCase()}` : `Verified ${label}`,
-              eventCount: nodeIds.length,
             }),
           );
           if (ok) onClose();
