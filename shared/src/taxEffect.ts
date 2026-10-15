@@ -10,7 +10,7 @@ export interface LineEffectMapping {
   category?: string;
   /** +1 when the line increases the category's base (income), -1 when it reduces it (expense). */
   sign: number;
-  /** Multiplier from the line's unit to dollars (Form 8949 lots are stored in cents). */
+  /** Multiplier from the line's unit to dollars. */
   scale: number;
   jurisdiction?: 'federal' | 'california';
   note?: string;
@@ -40,9 +40,11 @@ export function mapLineToEffect(key: string): LineEffectMapping {
       if (/^4[3-7]/.test(line) || ['I', 'J'].includes(line)) return NONE; // vehicle facts, yes/no
       return { kind: 'rate', category: 'schc_profit', sign: SCHC_INCOME.has(line) ? 1 : -1, scale: 1 };
     case 'F8949': {
+      // Lot lines hold the lot's gain in dollars, to the cent (README's "in cents" means precision,
+      // not unit: F8949.B.N1 = 19240.00 = proceeds 19,240.00 - basis 0). Box totals are lines too.
       const box = line.split('.')[0] ?? '';
       const cat = SHORT_8949_BOXES.has(box) ? 'stcg' : 'ltcg';
-      return { kind: 'rate', category: cat, sign: 1, scale: 0.01, note: 'Form 8949 lots are stored in cents' };
+      return { kind: 'rate', category: cat, sign: 1, scale: 1 };
     }
     case 'SchD': {
       const n = parseFloat(line);

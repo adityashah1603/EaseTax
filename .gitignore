@@ -5,3 +5,4 @@ dist/
 var/
 *.log
 .env
+.claude/worktrees/

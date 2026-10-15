@@ -97,6 +97,12 @@ describe('tax effect', () => {
     expect(e.estimable).toBe(true);
     expect(e.federalTax).toBeCloseTo(-1840 * rates.interest!.federal_per_dollar, 2);
   });
+  it('treats Form 8949 lot values as dollars', () => {
+    const rates = baseline.version('v3')!.tax_effect_rates;
+    // RSU lot N1 taxed on zero basis: correcting basis to 19,100 cuts the gain from 19,240 to 140.
+    const e = estimateEffect('F8949.B.N1', 19240, 140, rates, 'v3');
+    expect(e.federalTax).toBeCloseTo(-19100 * rates.stcg!.federal_per_dollar, 2);
+  });
   it('treats payments 1:1 against balance due', () => {
     const e = estimateEffect('F1040.26', 13000, 12000, {}, 'v3');
     expect(e.federalBalance).toBe(1000);
