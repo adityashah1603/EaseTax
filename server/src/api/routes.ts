@@ -336,7 +336,7 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.get('/api/changes/since-last-seen', async (req) => {
     const a = who(req);
     const since = wp.state.lastSeen.get(a.id) ?? 0;
-    return { since, events: wp.state.events.filter((e) => e.seq > since && e.actor !== a.id && e.type !== 'seen.marked').map((e) => wp.publicEvent(e)) };
+    return { since, events: wp.state.events.filter((e) => e.seq > since && e.actor !== a.id && e.type !== 'seen.marked' && e.type !== 'notification.read').map((e) => wp.publicEvent(e)) };
   });
   app.post('/api/changes/mark-seen', async (req) => {
     const a = who(req);

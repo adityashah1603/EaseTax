@@ -64,6 +64,8 @@ export class WorkState {
   accessLog: { actor: string; nodeId: string; field: string; reason?: string; at: string }[] = [];
   standards: unknown = null;
   lastSeen = new Map<string, number>();
+  /** actor -> inbox notification ids they have marked read (D-59) */
+  inboxRead = new Map<string, Set<string>>();
   filingSteps: { step: string; data?: unknown; by: string; at: string; seq: number }[] = [];
   history = new Map<string, WorkEvent[]>();
   events: WorkEvent[] = [];
@@ -320,6 +322,12 @@ export class WorkState {
       case 'seen.marked':
         this.lastSeen.set(e.actor, p.seq);
         break;
+      case 'notification.read': {
+        const set = this.inboxRead.get(e.actor) ?? new Set<string>();
+        for (const id of p.ids as string[]) p.read ? set.add(id) : set.delete(id);
+        this.inboxRead.set(e.actor, set);
+        break;
+      }
       case 'filing.step':
         this.filingSteps.push({ step: p.step, data: p.data, by: e.actor, at: e.at, seq: e.seq });
         break;

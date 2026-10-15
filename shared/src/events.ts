@@ -68,6 +68,8 @@ export interface EventPayloads {
   'sensitive.unmasked': { nodeId: string; field: string };
   'firm.standards_updated': { standards: unknown };
   'seen.marked': { seq: number };
+  /** The actor marks inbox notifications read (or unread again) (D-59). */
+  'notification.read': { ids: string[]; read: boolean };
   'events.undone': { eventIds: string[] };
   'filing.step': { step: string; data?: unknown };
 }

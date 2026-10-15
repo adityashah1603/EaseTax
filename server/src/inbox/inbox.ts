@@ -28,14 +28,9 @@ const VALUE_CHANGES = new Set<string>([
 
 const NO_READS: ReadonlySet<string> = new Set();
 
-/**
- * Notification ids this person has marked read.
- * TODO(core): needs a `notification.read { ids: string[] }` event and a per-actor projection in
- * WorkState (events.ts/state.ts are owned elsewhere). Until then read marks live in the browser
- * (web/src/api/inboxHooks.ts, localStorage keyed by actor) and this returns nothing.
- */
-export function inboxReadMarks(_wp: Workpaper, _actorId: string): ReadonlySet<string> {
-  return NO_READS;
+/** Notification ids this person has marked read (the `notification.read` projection, D-59). */
+export function inboxReadMarks(wp: Workpaper, actorId: string): ReadonlySet<string> {
+  return wp.state.inboxRead.get(actorId) ?? NO_READS;
 }
 
 export function inboxFor(wp: Workpaper, me: Actor, readIds: ReadonlySet<string> = inboxReadMarks(wp, me.id)): InboxDto {
@@ -55,7 +50,7 @@ export function inboxFor(wp: Workpaper, me: Actor, readIds: ReadonlySet<string> 
       seq: e.seq,
       nodeIds: [],
       done: false,
-      read: false,
+      read: readIds.has(id),
       ...x,
     });
   };

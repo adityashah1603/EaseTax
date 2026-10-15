@@ -117,6 +117,7 @@ const CLIENT_ROUTES: [method: string, pattern: RegExp][] = [
   ['POST', /^\/api\/filing\/client-approval$/],
   ['POST', /^\/api\/presence$/],
   ['GET', /^\/api\/inbox$/],
+  ['POST', /^\/api\/inbox\/read$/],
 ];
 
 export function clientMayCall(method: string, path: string): boolean {

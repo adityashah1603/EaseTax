@@ -128,3 +128,31 @@ describe('inbox', () => {
     expect((await get()).statusCode).toBe(403);
   });
 });
+
+describe('read marks are server-side events (D-59)', () => {
+  it('marks read and unread, only within your own inbox, and stays out of since-last-seen', async () => {
+    const { resolve } = await import('node:path');
+    const Fastify = (await import('fastify')).default;
+    const { loadBaseline } = await import('../src/baseline/baseline.ts');
+    const { EventStore } = await import('../src/events/store.ts');
+    const { Workpaper } = await import('../src/workpaper.ts');
+    const { registerRoutes } = await import('../src/api/routes.ts');
+    const { registerInboxRoutes } = await import('../src/api/inbox.ts');
+    const wp = new Workpaper(loadBaseline(resolve(__dirname, '../../okafor_lindqvist_2025_packet.json')), new EventStore(':memory:'));
+    const app = Fastify();
+    registerRoutes(app, wp);
+    registerInboxRoutes(app, wp);
+    wp.commit(wp.actor('st-02'), [{ type: 'assignment.created', payload: { assignmentId: 'as1', scope: 'area:business', assignee: 'st-01', text: 'Tie out Schedule C' } }]);
+    const get = async (actor: string) => (await app.inject({ method: 'GET', url: '/api/inbox', headers: { 'x-actor': actor } })).json();
+    const item = (await get('st-01')).items[0];
+    expect(item.read).toBe(false);
+    const post = (actor: string, body: unknown) => app.inject({ method: 'POST', url: '/api/inbox/read', headers: { 'x-actor': actor }, payload: body });
+    expect((await post('st-01', { ids: [item.id] })).statusCode).toBe(200);
+    expect((await get('st-01')).items[0].read).toBe(true);
+    await post('st-01', { ids: [item.id], read: false });
+    expect((await get('st-01')).items[0].read).toBe(false);
+    expect((await post('st-03', { ids: [item.id] })).statusCode).toBe(400); // not in Helen's inbox
+    const since = (await app.inject({ method: 'GET', url: '/api/changes/since-last-seen', headers: { 'x-actor': 'st-02' } })).json();
+    expect(since.events.some((e: any) => e.type === 'notification.read')).toBe(false);
+  });
+});
