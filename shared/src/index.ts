@@ -4,3 +4,4 @@ export * from './events.ts';
 export * from './taxEffect.ts';
 export * from './api.ts';
 export * from './views.ts';
+export * from './inbox.ts';

@@ -32,6 +32,7 @@ registerRoutes(app, wp);
 registerStream(app, wp);
 registerViewRoutes(app, wp);
 registerFilingRoutes(app, wp);
+(await import('./api/inbox.ts')).registerInboxRoutes(app, wp);
 
 const webDist = resolve(root, 'web/dist');
 if (existsSync(webDist)) {
