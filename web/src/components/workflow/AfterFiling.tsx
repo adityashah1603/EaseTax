@@ -1,10 +1,11 @@
 // After filing (FR-6.2–6.5, §7.11): the filed return's client copy, amendments against the
 // frozen snapshot, notice response cases, and roll-forward to next year.
-import type { FilingStatusDto, FrozenLine } from '@easetax/shared';
+import type { FilingStatusDto, FrozenLine, RollChange, RollHistoryPoint, RollOpenItem, RollProvenance, RollforwardDocument } from '@easetax/shared';
+import { nodeKind } from '@easetax/shared';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { FileDown, FileText, Forward, Printer } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ApiFailure, api } from '../../api/client';
 import { useSummary } from '../../api/hooks';
 import { useAmendment, useSnapshot, type FilingResult, type FilingSnapshotDto, type NoticeRecord } from '../../api/workflowHooks';
@@ -12,7 +13,7 @@ import { fmtDate, fmtDateTime, fmtNum, fmtValue, humanize } from '../../lib/form
 import { useDrawer } from '../../state/drawer';
 import { useSession } from '../../state/session';
 import { Empty, ErrorBox, Field, Loading, TraceValue } from '../ui';
-import { Hash, Panel, Pill, fetchAsActor, openBlob, saveBlob, useAction, useRoleGate } from './bits';
+import { Hash, Panel, Pill, fetchAsActor, openBlob, saveBlob, useAction, useRoleGate, type Tone } from './bits';
 
 const STAFF_WORK = ['preparer', 'reviewer', 'partner'] as const;
 
@@ -504,48 +505,167 @@ export function NoticePanel({ st }: { st: FilingStatusDto }) {
   );
 }
 
-interface RollDoc {
-  fromYear: number;
-  toYear: number;
-  sourceSnapshot: { id: string; contentHash: string; seq: number } | null;
-  carryovers: { jurisdiction: string; key: string; amount: number; from: string; note?: string }[];
-  basis: { what: string; amount: number; from: string; note?: string }[];
-  assets: { assetId: string; description: string; cost: number; method: string; federalAccumulated: number; from: string }[];
-  disposedAssets: unknown[];
-  openItems: { kind: string; text: string; nodeIds: string[] }[];
-  planning: {
-    basis: string;
-    federal: { safeHarbor?: string; requiredAnnualPayment: number; installments: { due: string; amount: number }[] };
-    california: { safeHarbor?: string; requiredAnnualPayment: number; installments: { due: string; amount: number }[] };
-    knownChanges: string[];
-    note: string;
-  };
+// ---------------------------------------------------------------- roll-forward
+
+/** Drawer-openable ids (issue / judgment / note ids are not nodes; their items open their primary node). */
+const isNode = (id: string | undefined): id is string => !!id && !!nodeKind(id) && !id.startsWith('version:');
+
+const fmtHist = (v: unknown) => (typeof v === 'number' ? fmtNum(v) : v === null || v === undefined ? '—' : String(v));
+
+/** 2024 → 2025 → 2026 inline; each figure with a node opens the trace drawer on it. */
+function RollHistory({ points }: { points: RollHistoryPoint[] }) {
+  const drawer = useDrawer();
+  if (!points.length) return null;
+  return (
+    <span className="inline-flex flex-wrap items-baseline gap-x-1 text-2xs text-graphite">
+      {points.map((h, i) => (
+        <span key={i} className="inline-flex items-baseline gap-1">
+          {i > 0 && <span className="text-faint">→</span>}
+          <span className="text-faint">{h.year}</span>
+          {isNode(h.nodeId) ? (
+            <button
+              type="button"
+              className="num max-w-[16rem] truncate underline decoration-faint decoration-dotted underline-offset-2 hover:bg-blue-soft hover:text-blue-ink"
+              title={`${h.label}${h.note ? ` · ${h.note}` : ''} — trace ${h.nodeId}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                drawer.open(h.nodeId!);
+              }}
+            >
+              {fmtHist(h.value)}
+            </button>
+          ) : (
+            <span className={clsx('num max-w-[16rem] truncate', h.year > 2025 && 'font-semibold text-ink')} title={`${h.label}${h.note ? ` · ${h.note}` : ''}`}>
+              {fmtHist(h.value)}
+            </span>
+          )}
+        </span>
+      ))}
+    </span>
+  );
 }
+
+const CHANGE_TONE: Record<RollChange['kind'], Tone> = {
+  adjustment: 'info',
+  read_correction: 'info',
+  judgment: 'ok',
+  variance_explanation: 'neutral',
+  issue: 'warn',
+  note: 'neutral',
+  question: 'neutral',
+};
+
+/** Sources and 2025 changes behind an item, folded so the list stays scannable. */
+function RollProvenanceDetails({ item }: { item: RollProvenance }) {
+  const drawer = useDrawer();
+  return (
+    <details className="mt-0.5 text-2xs" onClick={(e) => e.stopPropagation()}>
+      <summary className="cursor-pointer select-none text-faint hover:text-blue-ink">
+        {item.sources.length} source{item.sources.length === 1 ? '' : 's'}
+        {item.changes.length > 0 && ` · ${item.changes.length} change${item.changes.length === 1 ? '' : 's'} in 2025`}
+      </summary>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {item.sources.map((s) =>
+          isNode(s) ? (
+            <button key={s} type="button" className="rounded border border-rule px-1 font-mono text-blue-ink hover:bg-blue-soft" onClick={() => drawer.open(s)}>
+              {s}
+            </button>
+          ) : (
+            <span key={s} className="rounded border border-ruleSoft px-1 font-mono text-graphite" title="Issue, judgment, note or question id; the item opens on its node">
+              {s}
+            </span>
+          ),
+        )}
+      </div>
+      {item.changes.length > 0 && (
+        <ul className="mt-1 space-y-0.5">
+          {item.changes.map((c) => (
+            <li key={`${c.kind}:${c.id}`} className="flex items-baseline gap-1.5">
+              <Pill tone={CHANGE_TONE[c.kind]}>{humanize(c.kind)}</Pill>
+              {isNode(c.nodeId) ? (
+                <button type="button" className="text-left hover:text-blue-ink hover:underline" onClick={() => drawer.open(c.nodeId!)}>
+                  {c.summary}
+                </button>
+              ) : (
+                <span>{c.summary}</span>
+              )}
+              <span className="whitespace-nowrap text-faint">
+                {c.status && `${c.status} · `}
+                {c.by}
+                {c.at && ` · ${fmtDate(c.at)}`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </details>
+  );
+}
+
+/** One roll-forward item: clicking it opens the trace drawer on its primary source. */
+function RollItem({ item, title, sub, amount, lead }: { item: RollProvenance; title: ReactNode; sub?: string; amount?: unknown; lead?: ReactNode }) {
+  const drawer = useDrawer();
+  const open = () => item.primary && drawer.open(item.primary);
+  return (
+    <li
+      className={clsx('border-b border-ruleSoft py-1', item.primary && 'cursor-pointer hover:bg-paper')}
+      onClick={open}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), open())}
+      tabIndex={item.primary ? 0 : undefined}
+      title={item.primary ? `Trace ${item.primary}` : undefined}
+    >
+      <div className="flex items-baseline gap-2 text-xs">
+        {lead}
+        <span className="min-w-0 flex-1">
+          {title}
+          {sub && <span className="ml-1 text-2xs text-faint">{sub}</span>}
+        </span>
+        {amount !== undefined && <span className="num font-semibold">{fmtHist(amount)}</span>}
+      </div>
+      <RollHistory points={item.history} />
+      <RollProvenanceDetails item={item} />
+    </li>
+  );
+}
+
+function RollGroup({ title, count, children, open = true }: { title: string; count: number; children: ReactNode; open?: boolean }) {
+  return (
+    <details open={open} className="mb-2">
+      <summary className="section-title mb-1 cursor-pointer select-none">
+        {title} ({count})
+      </summary>
+      <ul>{children}</ul>
+    </details>
+  );
+}
+
+const OPEN_KIND_TITLE: Record<RollOpenItem['kind'], string> = {
+  issue: 'Open issues',
+  question: 'Open client questions',
+  note: 'Open review notes',
+  outside_filing: 'Filings outside the return',
+  engine_diagnostic: 'Engine carryforward / not-computed items',
+  judgment: 'Elections and judgments to apply again',
+  prior_preparer: 'Left open by the prior preparer (2024)',
+};
 
 export function RollForwardPanel({ st }: { st: FilingStatusDto }) {
   const gate = useRoleGate([...STAFF_WORK], 'roll the file forward');
   const act = useAction();
-  const drawer = useDrawer();
   const latest = st.snapshots.filter((s) => s.kind === 'rollforward').at(-1);
   const snap = useSnapshot(latest?.id);
-  const doc = snap.data?.content as unknown as RollDoc | undefined;
-  const fromNode = (id: string) =>
-    id.startsWith('version:') || id.startsWith('py:') ? (
-      <span className="font-mono text-2xs text-faint">{id}</span>
-    ) : (
-      <button className="font-mono text-2xs text-blue-ink underline decoration-dotted" onClick={() => drawer.open(id)}>
-        {id}
-      </button>
-    );
-  const byKind = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const o of doc?.openItems ?? []) m.set(o.kind, (m.get(o.kind) ?? 0) + 1);
+  const doc = snap.data?.content as unknown as RollforwardDocument | undefined;
+  const openByKind = useMemo(() => {
+    const m = new Map<RollOpenItem['kind'], RollOpenItem[]>();
+    for (const o of doc?.openItems ?? []) m.set(o.kind, [...(m.get(o.kind) ?? []), o]);
     return [...m.entries()];
   }, [doc]);
+  // Documents rolled before items carried provenance have no `sources`; ask for a fresh roll.
+  const legacy = !!doc && !doc.builtFrom;
   return (
     <Panel
-      title="Roll forward to 2026"
-      sub="Carryovers, basis, the asset register, open items and estimate planning, each linked back to the 2025 node it came from, so next year's trace crosses years."
+      title={`Roll forward to ${doc?.toYear ?? 2026}`}
+      sub="Carryovers, basis, the asset register, open items and estimate planning. Every item traces to the 2025 node it came from, with its 2024 → 2025 → 2026 history and the 2025 work that changed it."
       right={
         <button
           className="btn-primary"
@@ -562,41 +682,56 @@ export function RollForwardPanel({ st }: { st: FilingStatusDto }) {
         <p className="text-sm text-faint">Not rolled forward yet.</p>
       ) : snap.isLoading ? (
         <Loading />
+      ) : legacy ? (
+        <p className="text-sm text-faint">This roll-forward predates item-level tracing. Roll forward again to trace each item back to 2025.</p>
       ) : doc ? (
         <div className="space-y-3 text-sm">
-          <p className="text-xs text-graphite">
-            {doc.fromYear} → {doc.toYear}. Values from {doc.planning.basis}. Document <code className="font-mono">{latest.id.slice(0, 8)}…</code> <Hash value={latest.contentHash} />
+          <p className="flex flex-wrap items-center gap-1.5 text-xs text-graphite">
+            <span>
+              {doc.fromYear} → {doc.toYear}.
+            </span>
+            {doc.builtFrom.kind === 'filed_snapshot' ? (
+              <Pill tone={doc.builtFrom.accepted ? 'ok' : 'warn'} title="D-28: the filed return is the snapshot behind the accepted federal submission">
+                From the filed return
+              </Pill>
+            ) : (
+              <Pill tone="warn" title="Nothing filed yet: values are the live workpaper's and can still change">
+                From the live workpaper
+              </Pill>
+            )}
+            <span>{doc.builtFrom.text}, event #{doc.builtFrom.seq}.</span>
+            <span>
+              Document <code className="font-mono">{latest.id.slice(0, 8)}…</code> <Hash value={latest.contentHash} />
+            </span>
           </p>
+          <p className="text-2xs text-faint">Click any item to trace it; click a year's figure to trace that figure.</p>
           <div className="grid gap-4 lg:grid-cols-2">
             <div>
-              <div className="section-title mb-1">Carryovers out ({doc.carryovers.length})</div>
-              <table className="w-full text-xs">
-                <tbody>
-                  {doc.carryovers.map((c, i) => (
-                    <tr key={i} className="border-b border-ruleSoft">
-                      <td className="py-0.5 text-graphite">{c.jurisdiction === 'california' ? 'CA' : 'Fed'}</td>
-                      <td>{humanize(c.key)}</td>
-                      <td className="num text-right font-semibold">{fmtNum(c.amount)}</td>
-                      <td className="pl-2">{fromNode(c.from)}</td>
-                    </tr>
+              <RollGroup title="Carryovers out" count={doc.carryovers.length}>
+                {doc.carryovers.map((c) => (
+                  <RollItem key={`${c.jurisdiction}.${c.key}`} item={c} title={c.label} amount={c.amount} lead={<span className="w-6 shrink-0 text-2xs text-graphite">{c.jurisdiction === 'california' ? 'CA' : 'Fed'}</span>} />
+                ))}
+              </RollGroup>
+              <RollGroup title="Basis" count={doc.basis.length}>
+                {doc.basis.map((b) => (
+                  <RollItem key={b.what} item={b} title={b.what} sub={b.note} amount={b.amount} />
+                ))}
+              </RollGroup>
+              <RollGroup title="Asset register (in service)" count={doc.assets.length}>
+                {doc.assets.map((a) => (
+                  <RollItem key={a.assetId} item={a} title={a.description} sub={`${a.method} · ${a.lifeYears} yr · cost ${fmtNum(a.cost)}`} amount={a.federalAccumulated} />
+                ))}
+              </RollGroup>
+              {doc.disposedAssets.length > 0 && (
+                <RollGroup title="Disposed in 2025 (leave the register)" count={doc.disposedAssets.length} open={false}>
+                  {doc.disposedAssets.map((a) => (
+                    <RollItem key={a.assetId} item={a} title={a.description} sub={`disposed ${fmtDate(a.disposed)}`} />
                   ))}
-                </tbody>
-              </table>
-              <div className="section-title mb-1 mt-3">Basis</div>
-              <table className="w-full text-xs">
-                <tbody>
-                  {doc.basis.map((b, i) => (
-                    <tr key={i} className="border-b border-ruleSoft" title={b.note}>
-                      <td className="py-0.5">{b.what}</td>
-                      <td className="num text-right font-semibold">{fmtNum(b.amount)}</td>
-                      <td className="pl-2">{fromNode(b.from)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                </RollGroup>
+              )}
             </div>
             <div>
-              <div className="section-title mb-1">2026 estimates</div>
+              <div className="section-title mb-1">{doc.toYear} estimates</div>
               {(['federal', 'california'] as const).map((j) => (
                 <div key={j} className="mb-2">
                   <div className="text-xs">
@@ -613,17 +748,22 @@ export function RollForwardPanel({ st }: { st: FilingStatusDto }) {
                 </div>
               ))}
               <p className="text-2xs text-faint">{doc.planning.note}</p>
+              <RollGroup title="Planning rests on" count={doc.planning.items.length}>
+                {doc.planning.items.map((p) => (
+                  <RollItem key={p.key} item={p} title={p.text ?? p.label} amount={p.amount} />
+                ))}
+              </RollGroup>
               <div className="section-title mb-1 mt-3">Carried into next year</div>
-              <p className="text-xs">
-                {doc.assets.length} assets in service, {doc.disposedAssets.length} disposed. {doc.openItems.length} open items: {byKind.map(([k, n]) => `${n} ${humanize(k).toLowerCase()}`).join(', ')}.
+              <p className="mb-1 text-xs">
+                {doc.assets.length} assets in service, {doc.disposedAssets.length} disposed. {doc.openItems.length} open items.
               </p>
-              {doc.planning.knownChanges.length > 0 && (
-                <ul className="mt-1 list-disc pl-4 text-xs text-graphite">
-                  {doc.planning.knownChanges.map((c) => (
-                    <li key={c}>{c}</li>
+              {openByKind.map(([kind, items]) => (
+                <RollGroup key={kind} title={OPEN_KIND_TITLE[kind] ?? humanize(kind)} count={items.length} open={kind !== 'issue' && items.length <= 8}>
+                  {items.map((o, i) => (
+                    <RollItem key={`${o.id ?? i}`} item={o} title={o.text} />
                   ))}
-                </ul>
-              )}
+                </RollGroup>
+              ))}
             </div>
           </div>
         </div>

@@ -131,3 +131,127 @@ export interface FrozenLine {
   value: unknown;
   adjusted: boolean;
 }
+
+// ------------------------------------------------------------------ roll-forward
+
+/** One year's figure in an item's history (2024 prior year → 2025 → 2026 opening). */
+export interface RollHistoryPoint {
+  year: number;
+  label: string;
+  value: unknown;
+  /** Where the figure lives (py:, line:, asset:, ev:); absent for the 2026 opening itself. */
+  nodeId?: string;
+  note?: string;
+}
+
+/** A 2025 workpaper event that changed or decided something an item rests on. */
+export interface RollChange {
+  id: string;
+  kind: 'adjustment' | 'judgment' | 'read_correction' | 'variance_explanation' | 'issue' | 'note' | 'question';
+  summary: string;
+  /** The node it acted on (opens the trace drawer). */
+  nodeId?: string;
+  status?: string;
+  by?: string;
+  at?: string;
+}
+
+/** Where a roll-forward item came from in 2025, and how it got there. */
+export interface RollProvenance {
+  /** Node ids (line:, py:, asset:, ev:, doc:, diag:, household:) and issue / judgment / note ids the item came from. */
+  sources: string[];
+  /** The drawer-openable node to open when the item is clicked. */
+  primary?: string;
+  history: RollHistoryPoint[];
+  changes: RollChange[];
+}
+
+export interface RollCarryover extends RollProvenance {
+  jurisdiction: 'federal' | 'california';
+  key: string;
+  label: string;
+  amount: number;
+  /** Primary source node (kept for older readers). */
+  from: string;
+  note?: string;
+}
+
+export interface RollBasis extends RollProvenance {
+  what: string;
+  amount: number;
+  from: string;
+  note?: string;
+}
+
+export interface RollAsset extends RollProvenance {
+  assetId: string;
+  description: string;
+  activity: string;
+  cost: number;
+  placedInService: string;
+  method: string;
+  lifeYears: number;
+  federalAccumulated: number;
+  californiaAccumulated: number;
+  from: string;
+}
+
+export interface RollDisposedAsset extends RollProvenance {
+  assetId: string;
+  description: string;
+  disposed: string;
+  from: string;
+}
+
+export interface RollOpenItem extends RollProvenance {
+  kind: 'issue' | 'question' | 'note' | 'outside_filing' | 'engine_diagnostic' | 'judgment' | 'prior_preparer';
+  /** The issue / note / question / judgment / outside-filing id, when the item is one. */
+  id?: string;
+  text: string;
+  nodeIds: string[];
+}
+
+export interface RollPlanningItem extends RollProvenance {
+  key: string;
+  label: string;
+  amount?: number;
+  text?: string;
+}
+
+export interface RollInstallment {
+  due: string;
+  amount: number;
+}
+
+export interface RollEstimatePlan {
+  safeHarbor?: string;
+  priorYearTax: { amount: number; from: string };
+  requiredAnnualPayment: number;
+  installments: RollInstallment[];
+}
+
+export interface RollforwardDocument {
+  schema: 'easetax.rollforward/1';
+  fromYear: number;
+  toYear: number;
+  clientId: string;
+  /** D-28: built from the filed snapshot when there is one, else from the live workpaper. */
+  builtFrom: { kind: 'filed_snapshot' | 'live_workpaper'; snapshotId?: string; accepted?: boolean; seq: number; text: string };
+  sourceSnapshot: { id: string; contentHash: string; seq: number } | null;
+  engineVersion: string;
+  carryovers: RollCarryover[];
+  basis: RollBasis[];
+  assets: RollAsset[];
+  disposedAssets: RollDisposedAsset[];
+  openItems: RollOpenItem[];
+  planning: {
+    basis: string;
+    federal: RollEstimatePlan;
+    california: RollEstimatePlan;
+    minimumTaxCredit?: { amount: number; from: string; note: string };
+    knownChanges: string[];
+    note: string;
+    /** The planning figures and known changes, each with what they rest on. */
+    items: RollPlanningItem[];
+  };
+}
