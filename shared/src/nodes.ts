@@ -36,7 +36,9 @@ export type NodeKind =
   | 'version'
   | 'diag'
   | 'att'
-  | 'related';
+  | 'related'
+  | 'question'
+  | 'note';
 
 export const lineId = (version: string, key: string) => `line:${version}:${key}`;
 export const evId = (id: string) => `ev:${id}`;
@@ -50,7 +52,7 @@ export const attId = (id: string) => `att:${id}`;
 export function nodeKind(id: string): NodeKind | null {
   if (id.startsWith('doc:')) return id.includes('#page') ? 'page' : 'doc';
   const prefix = id.slice(0, id.indexOf(':'));
-  const kinds: NodeKind[] = ['line', 'ev', 'py', 'agency', 'asset', 'household', 'qa', 'msg', 'call', 'ref', 'timeline', 'version', 'diag', 'att', 'related'];
+  const kinds: NodeKind[] = ['line', 'ev', 'py', 'agency', 'asset', 'household', 'qa', 'msg', 'call', 'ref', 'timeline', 'version', 'diag', 'att', 'related', 'question', 'note'];
   return (kinds as string[]).includes(prefix) ? (prefix as NodeKind) : null;
 }
 

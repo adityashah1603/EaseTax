@@ -146,7 +146,7 @@ describe('read marks are server-side events (D-59)', () => {
     const get = async (actor: string) => (await app.inject({ method: 'GET', url: '/api/inbox', headers: { 'x-actor': actor } })).json();
     const item = (await get('st-01')).items[0];
     expect(item.read).toBe(false);
-    const post = (actor: string, body: unknown) => app.inject({ method: 'POST', url: '/api/inbox/read', headers: { 'x-actor': actor }, payload: body });
+    const post = (actor: string, body: Record<string, unknown>) => app.inject({ method: 'POST', url: '/api/inbox/read', headers: { 'x-actor': actor }, payload: body as any }) as unknown as Promise<{ statusCode: number }>;
     expect((await post('st-01', { ids: [item.id] })).statusCode).toBe(200);
     expect((await get('st-01')).items[0].read).toBe(true);
     await post('st-01', { ids: [item.id], read: false });

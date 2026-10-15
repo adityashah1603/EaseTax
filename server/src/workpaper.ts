@@ -325,6 +325,12 @@ export class Workpaper {
       }
     }
     s.revision = this.revision(id);
+    if (id.startsWith('note:')) {
+      const n = this.state.notes.get(id.slice(5));
+      s.kind = 'note';
+      s.label = n ? n.thread[0]!.text : id;
+      s.sublabel = n ? `${n.blocking ? 'Blocking review note' : 'Review note'} · ${n.status}` : undefined;
+    }
     if (id.startsWith('question:')) {
       const q = this.state.questions.get(id.slice(9));
       s.kind = 'question';

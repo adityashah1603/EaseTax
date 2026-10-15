@@ -86,6 +86,7 @@ export function isMasked(v: unknown): boolean {
 export const NODE_KIND_LABEL: Record<string, string> = {
   line: 'Return line',
   related: 'Related return',
+  note: 'Review note',
   ev: 'Extracted value',
   doc: 'Document',
   page: 'Document page',
