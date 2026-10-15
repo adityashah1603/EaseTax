@@ -9,6 +9,8 @@ import { EventStore } from './events/store.ts';
 import { Workpaper } from './workpaper.ts';
 import { registerRoutes } from './api/routes.ts';
 import { registerStream } from './realtime/stream.ts';
+import { registerViewRoutes } from './api/views.ts';
+import { registerFilingRoutes } from './api/filing.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const packetPath = process.env.PACKET_PATH ?? resolve(root, 'okafor_lindqvist_2025_packet.json');
@@ -28,6 +30,8 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } });
 registerRoutes(app, wp);
 registerStream(app, wp);
+registerViewRoutes(app, wp);
+registerFilingRoutes(app, wp);
 
 const webDist = resolve(root, 'web/dist');
 if (existsSync(webDist)) {
