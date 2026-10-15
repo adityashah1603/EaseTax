@@ -12,7 +12,13 @@ const STATUS: Record<PolicyError['code'], number> = { forbidden: 403, policy: 42
 
 export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   const who = (req: FastifyRequest): Actor => wp.actor((req.headers['x-actor'] as string) || 'st-01');
-  const ok = (events: { seq: number }[], data?: unknown) => ({ ok: true as const, seq: events.at(-1)?.seq ?? wp.state.seq, data });
+  const ok = (events: { seq: number; id: string; batchId?: string }[], data?: unknown) => ({
+    ok: true as const,
+    seq: events.at(-1)?.seq ?? wp.state.seq,
+    batchId: events.find((e) => e.batchId)?.batchId,
+    eventIds: events.map((e) => e.id),
+    data,
+  });
 
   app.setErrorHandler((err, _req, reply: FastifyReply) => {
     if (err instanceof PolicyError) return reply.status(STATUS[err.code]).send({ ok: false, error: err.message, code: err.code, rule: err.rule });
@@ -139,6 +145,10 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     const { id, decision } = req.params as { id: string; decision: 'approve' | 'reject' | 'revert' };
     if (!['approve', 'reject', 'revert'].includes(decision)) throw new PolicyError('Bad decision', 'invalid');
     return ok(wp.decideAdjustment(who(req), id, decision, (req.body as any)?.note));
+  });
+  app.get('/api/adjustments', async (req) => {
+    const status = (req.query as { status?: string }).status;
+    return [...wp.state.adjustments.values()].filter((a) => !status || a.status === status);
   });
   app.post('/api/undo', async (req) => ok(wp.undo(who(req), req.body as { batchId?: string; eventId?: string })));
 

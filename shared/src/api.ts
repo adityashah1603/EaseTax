@@ -36,6 +36,11 @@ export interface NodeSummary {
   effectiveValue?: unknown;
   version?: string;
   confidence?: number;
+  /** Engine rule and note (lines only). */
+  rule?: string;
+  note?: string;
+  /** Review area (lines, and values that feed lines). */
+  area?: string;
   /** Counts used for badges. */
   openIssues?: number;
   verified?: boolean;
@@ -274,6 +279,7 @@ export interface LineRow {
   effectiveValue: unknown;
   priorYear?: unknown;
   rule: string;
+  area: string;
   openIssues: number;
   verified: boolean;
   adjusted: boolean;
@@ -289,6 +295,10 @@ export interface WhoAmI {
 export interface CommandResult<T = unknown> {
   ok: true;
   seq: number;
+  /** Set when the command wrote a batch; pass to POST /api/undo. */
+  batchId?: string;
+  /** Ids of the events written, for single-event undo. */
+  eventIds: string[];
   data?: T;
 }
 

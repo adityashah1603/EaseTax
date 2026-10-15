@@ -143,10 +143,20 @@ export class Workpaper {
     return this.issuesByNode.get(nodeId) ?? [];
   }
 
+  /** Area of the first line among `ids`, else of the first current-version line fed by one of them. */
   private areaOfNodes(ids: string[]): string | undefined {
     for (const id of ids) {
       const l = parseLineId(id);
       if (l) return areaOfKey(l.key);
+    }
+    const prefix = `line:${this.version}:`;
+    for (const id of ids) {
+      const ev = id.startsWith('doc:') && !id.includes('#') ? (this.b.evsByDoc.get(id.slice(4)) ?? []).map((e) => `ev:${e.id}`) : [id];
+      for (const n of ev) {
+        for (const p of this.g.parents(n)) {
+          if (p.to.startsWith(prefix)) return areaOfKey(p.to.slice(prefix.length));
+        }
+      }
     }
     return undefined;
   }
@@ -164,6 +174,9 @@ export class Workpaper {
         if (!l) break;
         s.label = l.label;
         s.sublabel = `${l.form} ${l.line}${l.jurisdiction === 'california' ? ' · CA' : ''}`;
+        s.rule = l.rule;
+        s.note = l.note;
+        s.area = areaOfKey(l.key);
         s.version = p.version;
         s.value = l.value;
         const adj = p.version === this.version ? this.state.effectiveAdjustment(id) : undefined;
@@ -376,6 +389,7 @@ export class Workpaper {
         effectiveValue: adj ? adj.newValue : l.value,
         priorYear: this.b.priorLines[l.key],
         rule: l.rule,
+        area: areaOfKey(l.key),
         openIssues: direct,
         verified: [...this.state.verifications.values()].some((x) => x.nodeId === id),
         adjusted: !!adj,
