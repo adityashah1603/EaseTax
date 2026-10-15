@@ -86,10 +86,39 @@ const ALLOWED: Record<Action, Role[]> = {
   undo: STAFF_WORK,
 };
 
+const ACTION_TEXT: Partial<Record<Action, string>> = {
+  filing: 'file, extend or record e-file results',
+  standards: 'change firm standards or read the access log',
+  approve_adjustment: 'approve adjustments',
+  client_approval: 'approve the return for the client',
+  answer_client_question: 'answer this question',
+  log_time: 'log time',
+};
+
 export function assertCan(actor: Actor, action: Action) {
   if (!ALLOWED[action].includes(actor.role)) {
-    throw new PolicyError(`${actor.name} (${actor.role}) cannot ${action.replace(/_/g, ' ')}`, 'forbidden');
+    throw new PolicyError(`${actor.name} (${actor.role}) cannot ${ACTION_TEXT[action] ?? action.replace(/_/g, ' ')}`, 'forbidden');
   }
+}
+
+/**
+ * What a client user may call. Everything else under /api is firm-only: the workpaper
+ * (issues, notes, traces, views) is the firm's record, not the client's (D-35).
+ */
+const CLIENT_ROUTES: [method: string, pattern: RegExp][] = [
+  ['GET', /^\/api\/me$/],
+  ['GET', /^\/api\/summary$/],
+  ['GET', /^\/api\/questions$/],
+  ['POST', /^\/api\/questions\/[^/]+\/answer$/],
+  ['POST', /^\/api\/attachments$/],
+  ['GET', /^\/api\/filing\/status$/],
+  ['GET', /^\/api\/filing\/client-copy$/],
+  ['POST', /^\/api\/filing\/client-approval$/],
+  ['POST', /^\/api\/presence$/],
+];
+
+export function clientMayCall(method: string, path: string): boolean {
+  return CLIENT_ROUTES.some(([m, re]) => m === method && re.test(path));
 }
 
 export function canSignLevel(role: Role, level: 'preparer' | 'reviewer' | 'partner'): boolean {

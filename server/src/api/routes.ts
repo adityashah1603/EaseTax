@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Actor, WhoAmI } from '@easetax/shared';
 import { estimateEffect, nodeKind, parseLineId } from '@easetax/shared';
 import type { Workpaper } from '../workpaper.ts';
-import { assertCan, PolicyError } from '../policy/policy.ts';
+import { assertCan, clientMayCall, PolicyError } from '../policy/policy.ts';
 
 const STATUS: Record<PolicyError['code'], number> = { forbidden: 403, policy: 422, invalid: 400, conflict: 409, not_found: 404 };
 
@@ -19,6 +19,15 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     batchId: events.find((e) => e.batchId)?.batchId,
     eventIds: events.map((e) => e.id),
     data,
+  });
+
+  // Every API request names a known actor (D-09); clients reach only the portal's routes (D-35).
+  // The SSE stream identifies itself by query string and carries no workpaper data beyond event ids.
+  app.addHook('onRequest', async (req) => {
+    const path = req.url.split('?')[0]!;
+    if (!path.startsWith('/api/') || path === '/api/stream') return;
+    const a = who(req);
+    if (a.kind === 'client' && !clientMayCall(req.method, path)) throw new PolicyError('This is part of the firm workpaper', 'forbidden');
   });
 
   app.setErrorHandler((err, _req, reply: FastifyReply) => {

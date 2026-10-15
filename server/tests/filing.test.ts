@@ -81,7 +81,7 @@ describe('readiness', () => {
 
 describe('client approval', () => {
   it('is client-only and never echoes or stores the PINs', () => {
-    expect(() => recordClientApproval(wp, A('st-02'), { pins: { taxpayer: '41207' }, consent: true })).toThrow(/cannot client approval/);
+    expect(() => recordClientApproval(wp, A('st-02'), { pins: { taxpayer: '41207' }, consent: true })).toThrow(/cannot approve the return for the client/);
     const r = recordClientApproval(wp, A('cu-01'), { pins: { taxpayer: '41207', spouse: '88310' }, consent: true });
     expect(JSON.stringify(r.data)).not.toMatch(/41207|88310/);
     expect(JSON.stringify(wp.store.all())).not.toMatch(/41207|88310/);
@@ -111,7 +111,7 @@ describe('submit, freeze and after', () => {
 
   it('only reviewer/partner may submit; preparer cannot', () => {
     makeReady();
-    expect(() => submit(wp, A('st-01'))).toThrow(/cannot filing/);
+    expect(() => submit(wp, A('st-01'))).toThrow(/cannot file, extend or record e-file results/);
   });
 
   it('replays the e-file rejection, resubmission and acceptance from the packet', () => {
@@ -199,7 +199,7 @@ describe('filing API', () => {
     const app = Fastify();
     registerRoutes(app, wp);
     registerFilingRoutes(app, wp);
-    const r = await app.inject({ method: 'GET', url: '/api/filing/readiness' });
+    const r = await app.inject({ method: 'GET', url: '/api/filing/readiness', headers: { 'x-actor': 'st-02' } });
     expect(r.json().ready).toBe(false);
     const s = await app.inject({ method: 'POST', url: '/api/filing/submit', headers: { 'x-actor': 'st-02' } });
     expect(s.statusCode).toBe(422);
