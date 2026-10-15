@@ -8,6 +8,7 @@ export class PolicyError extends Error {
     message: string,
     public code: 'forbidden' | 'policy' | 'invalid' | 'conflict' | 'not_found' = 'policy',
     public rule?: string,
+    public details?: unknown,
   ) {
     super(message);
   }

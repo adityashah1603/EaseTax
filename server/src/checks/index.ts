@@ -14,3 +14,4 @@ import './recalc.ts';
 import './stateSplit.ts';
 import './judgment.ts';
 import './variance.ts';
+import './related.ts';

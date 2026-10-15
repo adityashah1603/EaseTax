@@ -5,6 +5,7 @@
 import type { EdgeType } from '@easetax/shared';
 import { assetId, diagId, evId, lineId, pageId, docId, resolveRef } from '@easetax/shared';
 import type { Baseline } from '../baseline/baseline.ts';
+import { relatedReturns } from '../baseline/related.ts';
 
 export interface Edge {
   to: string;
@@ -120,6 +121,13 @@ export function buildGraph(b: Baseline): Graph {
         g.addEdge(docId(replacement.id), docId(sup), 'supersedes');
       }
     }
+  }
+
+  // Related returns: each points at its documents in the packet; the filer points at it (D-58).
+  for (const r of relatedReturns(b)) {
+    g.nodes.add(r.id);
+    for (const d of r.docIds) g.addEdge(r.id, docId(d), 'refers_to');
+    if (r.personId) g.addEdge(`household:${r.personId}`, r.id, 'refers_to');
   }
 
   // The 2024 return as filed: each line cites the value the pipeline read from D06.

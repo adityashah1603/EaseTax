@@ -41,7 +41,8 @@ export interface Check {
     | 'completeness'
     | 'recalc'
     | 'state_split'
-    | 'judgment';
+    | 'judgment'
+    | 'related';
   run(ctx: CheckContext): CheckIssue[];
 }
 

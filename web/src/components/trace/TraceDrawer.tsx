@@ -312,7 +312,7 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
         </div>
       </aside>
 
-      {node && drawer.act === 'verify' && <VerifyDialog nodeIds={[nodeId]} label={label} onClose={() => drawer.setAct(null)} />}
+      {node && drawer.act === 'verify' && <VerifyDialog nodeIds={[nodeId]} label={label} revisions={{ [nodeId]: node.revision }} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'adjust' && <AdjustDialog node={node} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'correct' && node.kind === 'ev' && <CorrectReadDialog node={node} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'record' && node.kind === 'household' && (
@@ -353,6 +353,27 @@ function WorkRecord({ d }: { d: NodeDetail }) {
           {judgments.map((j) => (
             <JudgmentCard key={j.id} j={j} compact />
           ))}
+        </Section>
+      )}
+      {d.consistency && (
+        <Section title="Consistency with this return" count={d.consistency.length}>
+          {d.consistency.length === 0 ? (
+            <div className="text-sm text-graphite">Nothing in this return to compare against.</div>
+          ) : (
+            <ul className="space-y-1">
+              {d.consistency.map((c, i) => (
+                <li key={i} className={clsx('rounded border px-2.5 py-1.5 text-sm', c.ok ? 'border-rule bg-panel' : 'border-pencil bg-pencil-soft text-pencil-ink')}>
+                  <span className={clsx('mr-1.5 font-semibold', c.ok ? 'text-ledger-ink' : '')}>{c.ok ? '✓' : '✗'}</span>
+                  <span className="font-semibold">{c.check}</span>: {c.detail}
+                  {c.nodeIds.filter((n) => n !== d.node.id).map((n) => (
+                    <button key={n} className="ml-1.5 text-xs text-blue-ink underline underline-offset-2" onClick={() => drawer.open(n)}>
+                      {n.replace(/^line:v3:/, '').replace(/^ev:/, '')}
+                    </button>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          )}
         </Section>
       )}
       {d.recordCorrections.length > 0 && (

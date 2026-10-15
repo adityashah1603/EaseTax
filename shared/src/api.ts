@@ -41,6 +41,8 @@ export interface NodeSummary {
   note?: string;
   /** Review area (lines, and values that feed lines). */
   area?: string;
+  /** The node's revision: seq of the last event that changed its value or verification (D-57). */
+  revision?: number;
   /** Counts used for badges. */
   openIssues?: number;
   verified?: boolean;
@@ -213,6 +215,8 @@ export interface NodeDetail {
   adjustments: AdjustmentDto[];
   /** Corrections to what the pipeline read (extracted values only). */
   corrections: ReadCorrectionDto[];
+  /** Related returns only: how that return agrees with this one (D-58). */
+  consistency?: { check: string; ok: boolean; detail: string; nodeIds: string[] }[];
   /** Corrections to client-entered household data (household nodes only). */
   recordCorrections: HouseholdCorrectionDto[];
   issues: IssueDto[];
@@ -345,4 +349,6 @@ export interface ApiError {
   code: 'forbidden' | 'conflict' | 'invalid' | 'not_found' | 'policy';
   /** Policy rule that blocked the action, quoted from firm standards. */
   rule?: string;
+  /** Conflict (409): what changed since the caller's revision, so the UI can show who changed what (D-57). */
+  details?: { nodeId: string; revision: number; changes: WorkEvent[] };
 }

@@ -1,4 +1,6 @@
 // Small shared pieces: status marks, the traceable value, dialogs, error boxes.
+import { useQueryClient } from '@tanstack/react-query';
+import { useSession } from '../state/session';
 import type { IssueDto } from '@easetax/shared';
 import clsx from 'clsx';
 import { AlertTriangle, Cpu, MessageSquare, PenLine, ScanSearch, User, X } from 'lucide-react';
@@ -120,10 +122,50 @@ export function TraceValue({
 export function ErrorBox({ error }: { error: unknown }) {
   if (!error) return null;
   const { message, rule } = errorText(error);
+  const conflict = (error as { body?: { code?: string; details?: { changes?: ConflictChange[] } } })?.body;
   return (
     <div role="alert" className="rounded border border-pencil bg-pencil-soft px-2.5 py-1.5 text-sm text-pencil-ink">
       <div className="font-semibold">{message}</div>
       {rule && rule !== message && <div className="mt-0.5 text-xs">Firm rule: {rule}</div>}
+      {conflict?.code === 'conflict' && conflict.details?.changes?.length ? <ConflictChanges changes={conflict.details.changes} /> : null}
+    </div>
+  );
+}
+
+interface ConflictChange {
+  seq: number;
+  at: string;
+  actor: string;
+  type: string;
+  reason?: string;
+  payload: Record<string, unknown>;
+}
+
+/** D-57: what someone else changed since you opened this, and a way to load it before retrying. */
+function ConflictChanges({ changes }: { changes: ConflictChange[] }) {
+  const qc = useQueryClient();
+  const { nameOf } = useSession();
+  const show = (v: unknown) => (v === undefined || v === null ? '' : typeof v === 'number' ? v.toLocaleString('en-US') : String(v));
+  return (
+    <div className="mt-1.5 text-xs">
+      <div className="mb-0.5 font-semibold">What changed:</div>
+      <ul className="space-y-0.5">
+        {changes.map((c) => {
+          const p = c.payload;
+          const from = show(p.originalValue);
+          const to = show(p.newValue ?? p.correctedValue);
+          return (
+            <li key={c.seq}>
+              {nameOf(c.actor)}, {new Date(c.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}: {c.type.replace(/\./g, ' ')}
+              {to ? ` ${from ? `${from} → ` : ''}${to}` : ''}
+              {c.reason ? ` ("${c.reason}")` : ''}
+            </li>
+          );
+        })}
+      </ul>
+      <button type="button" className="mt-1 font-semibold underline underline-offset-2" onClick={() => void qc.invalidateQueries()}>
+        Load the latest, then try again
+      </button>
     </div>
   );
 }

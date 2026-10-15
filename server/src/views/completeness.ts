@@ -4,6 +4,7 @@
 import type { ViewDto, ViewFlag, ViewRow } from '@easetax/shared';
 import { diagId } from '@easetax/shared';
 import { AREAS } from '../baseline/areas.ts';
+import { relatedReturns } from '../baseline/related.ts';
 import { compact, fmt, status, text, type ViewCtx } from './ctx.ts';
 
 export interface OutsideFiling {
@@ -56,7 +57,7 @@ export function outsideFilings(ctx: ViewCtx): OutsideFiling[] {
       title: `${r.who}: ${r.return}`,
       why: own ? `Prepared by ${r.prepared_by}; must be consistent with this return claiming them as a dependent` : `Prepared by ${r.prepared_by}; ${r.in_this_packet ? `in packet: ${r.in_this_packet}` : 'not in packet'}`,
       triggered: true,
-      nodeIds: compact([person && `household:${person.id}`, own ? ctx.cell('F8812.6')?.nodeId : undefined]),
+      nodeIds: compact([relatedReturns(ctx.wp.b).find((x) => x.who === r.who)?.id, person && `household:${person.id}`, own ? ctx.cell('F8812.6')?.nodeId : undefined]),
     });
   }
   const ppw = ctx.packet.prior_years.prior_preparer_workpaper ?? {};

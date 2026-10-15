@@ -49,7 +49,8 @@ function useSubmit() {
   return { busy, error, go };
 }
 
-export function VerifyDialog({ nodeIds, onClose, label }: { nodeIds: string[]; onClose: () => void; label: string }) {
+export function VerifyDialog({ nodeIds, onClose, label, revisions }: { nodeIds: string[]; onClose: () => void; label: string; revisions?: Record<string, number | undefined> }) {
+  const [openedRevs] = useState(revisions);
   const standards = useStandards();
   const types = standards.data?.verification_types ?? [];
   const [type, setType] = useState('');
@@ -63,7 +64,7 @@ export function VerifyDialog({ nodeIds, onClose, label }: { nodeIds: string[]; o
         onSubmit={async (e) => {
           e.preventDefault();
           const ok = await s.go(() =>
-            run(() => api<CommandResult>('/api/verifications', { method: 'POST', body: { nodeIds, type: chosen, note: note || undefined } }), {
+            run(() => api<CommandResult>('/api/verifications', { method: 'POST', body: { nodeIds, type: chosen, note: note || undefined, expected: openedRevs } }), {
               done: nodeIds.length > 1 ? `Verified ${nodeIds.length} items as ${humanize(chosen).toLowerCase()}` : `Verified ${label}`,
             }),
           );
@@ -99,6 +100,9 @@ export function VerifyDialog({ nodeIds, onClose, label }: { nodeIds: string[]; o
 }
 
 export function AdjustDialog({ node, onClose }: { node: NodeSummary; onClose: () => void }) {
+  // D-57: the revision you were looking at when you opened this. Live updates refresh `node`,
+  // but a write must be judged against what you saw, so keep the opening value.
+  const [openedRev] = useState(node.revision);
   const [pre] = useState(() => takePrefill());
   const current = node.effectiveValue ?? node.value;
   const [value, setValue] = useState(pre?.value ?? (current === undefined ? '' : String(current)));
@@ -113,7 +117,7 @@ export function AdjustDialog({ node, onClose }: { node: NodeSummary; onClose: ()
         onSubmit={async (e) => {
           e.preventDefault();
           const ok = await s.go(() =>
-            run(() => api<CommandResult>('/api/adjustments', { method: 'POST', body: { nodeId: node.id, newValue: parsed, reason, authority: authority || undefined } }), {
+            run(() => api<CommandResult>('/api/adjustments', { method: 'POST', body: { nodeId: node.id, newValue: parsed, reason, authority: authority || undefined, revision: openedRev } }), {
               done: `Adjustment recorded on ${node.sublabel ?? node.label}. The engine value is kept as the original.`,
             }),
           );
@@ -163,6 +167,9 @@ export function AdjustDialog({ node, onClose }: { node: NodeSummary; onClose: ()
  * The pipeline's read is kept as the original; the corrected value is what the return rests on.
  */
 export function CorrectReadDialog({ node, onClose }: { node: NodeSummary; onClose: () => void }) {
+  // D-57: the revision you were looking at when you opened this. Live updates refresh `node`,
+  // but a write must be judged against what you saw, so keep the opening value.
+  const [openedRev] = useState(node.revision);
   const [pre] = useState(() => takePrefill());
   const [value, setValue] = useState(pre?.value ?? '');
   const [reason, setReason] = useState(pre?.reason ?? '');
@@ -174,7 +181,7 @@ export function CorrectReadDialog({ node, onClose }: { node: NodeSummary; onClos
         onSubmit={async (e) => {
           e.preventDefault();
           const ok = await s.go(() =>
-            run(() => api<CommandResult>('/api/reads/corrections', { method: 'POST', body: { evId: node.id, value, reason } }), {
+            run(() => api<CommandResult>('/api/reads/corrections', { method: 'POST', body: { evId: node.id, value, reason, revision: openedRev } }), {
               done: `Read corrected on ${node.sublabel ?? node.label}. The pipeline's read is kept as the original.`,
             }),
           );
@@ -225,6 +232,9 @@ export function CorrectReadDialog({ node, onClose }: { node: NodeSummary; onClos
  * or a message from the client. The original entry is kept.
  */
 export function CorrectRecordDialog({ node, onClose, onAsk }: { node: NodeSummary; onClose: () => void; onAsk: () => void }) {
+  // D-57: the revision you were looking at when you opened this. Live updates refresh `node`,
+  // but a write must be judged against what you saw, so keep the opening value.
+  const [openedRev] = useState(node.revision);
   const personId = node.id.slice('household:'.length);
   const questions = useQuestions();
   const issues = useIssues();
@@ -249,7 +259,7 @@ export function CorrectRecordDialog({ node, onClose, onAsk }: { node: NodeSummar
         onSubmit={async (e) => {
           e.preventDefault();
           const ok = await s.go(() =>
-            run(() => api<CommandResult>('/api/household/corrections', { method: 'POST', body: { personId, field, value, evidenceId: chosen, reason } }), {
+            run(() => api<CommandResult>('/api/household/corrections', { method: 'POST', body: { personId, field, value, evidenceId: chosen, reason, revision: openedRev } }), {
               done: `${node.label}: record corrected. The client's original entry is kept.`,
             }),
           );

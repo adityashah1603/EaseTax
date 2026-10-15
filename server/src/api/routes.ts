@@ -31,7 +31,7 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   });
 
   app.setErrorHandler((err, _req, reply: FastifyReply) => {
-    if (err instanceof PolicyError) return reply.status(STATUS[err.code]).send({ ok: false, error: err.message, code: err.code, rule: err.rule });
+    if (err instanceof PolicyError) return reply.status(STATUS[err.code]).send({ ok: false, error: err.message, code: err.code, rule: err.rule, details: err.details });
     const status = (err as any).statusCode ?? 500;
     return reply.status(status).send({ ok: false, error: (err as Error).message, code: status === 400 ? 'invalid' : 'internal' });
   });
@@ -139,8 +139,8 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
 
   // ------------------------------------------------------------ work actions
   app.post('/api/verifications', async (req) => {
-    const b = req.body as { nodeIds: string[]; type: string; note?: string; evidence?: string[] };
-    return ok(wp.verify(who(req), b.nodeIds, b.type, b.note, b.evidence));
+    const b = req.body as { nodeIds: string[]; type: string; note?: string; evidence?: string[]; expected?: Record<string, number> };
+    return ok(wp.verify(who(req), b.nodeIds, b.type, b.note, b.evidence, b.expected ?? {}));
   });
   app.delete('/api/verifications/:id', async (req) => {
     const a = who(req);
@@ -148,8 +148,8 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     return ok(wp.commit(a, [{ type: 'verification.removed', payload: { verificationId: (req.params as any).id } }]));
   });
   app.post('/api/adjustments', async (req) => {
-    const b = req.body as { nodeId: string; newValue: unknown; reason: string; authority?: string };
-    return ok(wp.proposeAdjustment(who(req), b.nodeId, b.newValue, b.reason, b.authority));
+    const b = req.body as { nodeId: string; newValue: unknown; reason: string; authority?: string; revision?: number };
+    return ok(wp.proposeAdjustment(who(req), b.nodeId, b.newValue, b.reason, b.authority, b.revision));
   });
   app.post('/api/adjustments/:id/:decision', async (req) => {
     const { id, decision } = req.params as { id: string; decision: 'approve' | 'reject' | 'revert' };
@@ -179,14 +179,14 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   });
   // Correct what the pipeline read (D-38). The original stays; who, why and when are recorded.
   app.post('/api/reads/corrections', async (req) => {
-    const b = req.body as { evId: string; value: unknown; reason: string };
-    return ok(wp.correctRead(who(req), b.evId, b.value, b.reason));
+    const b = req.body as { evId: string; value: unknown; reason: string; revision?: number };
+    return ok(wp.correctRead(who(req), b.evId, b.value, b.reason, b.revision));
   });
   app.post('/api/reads/corrections/:id/revert', async (req) => ok(wp.revertCorrection(who(req), (req.params as any).id, (req.body as any)?.reason)));
   // Correct client-entered household data, citing the client's confirmation (D-47).
   app.post('/api/household/corrections', async (req) => {
-    const b = req.body as { personId: string; field: string; value: unknown; evidenceId: string; reason: string };
-    return ok(wp.correctHousehold(who(req), b.personId, b.field, b.value, b.evidenceId, b.reason));
+    const b = req.body as { personId: string; field: string; value: unknown; evidenceId: string; reason: string; revision?: number };
+    return ok(wp.correctHousehold(who(req), b.personId, b.field, b.value, b.evidenceId, b.reason, b.revision));
   });
   app.post('/api/household/corrections/:id/revert', async (req) => ok(wp.revertHouseholdCorrection(who(req), (req.params as any).id, (req.body as any)?.reason)));
   app.post('/api/undo', async (req) => ok(wp.undo(who(req), req.body as { batchId?: string; eventId?: string })));

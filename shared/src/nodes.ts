@@ -17,6 +17,7 @@
 //   version:v3              an engine version
 //   diag:v3:CODE            an engine diagnostic
 //   att:<uuid>              a user attachment (file, note, message)
+//   related:<slug>          a related return filed outside this engagement (Ada's 1040, a K-1 entity)
 
 export type NodeKind =
   | 'line'
@@ -34,7 +35,8 @@ export type NodeKind =
   | 'timeline'
   | 'version'
   | 'diag'
-  | 'att';
+  | 'att'
+  | 'related';
 
 export const lineId = (version: string, key: string) => `line:${version}:${key}`;
 export const evId = (id: string) => `ev:${id}`;
@@ -48,7 +50,7 @@ export const attId = (id: string) => `att:${id}`;
 export function nodeKind(id: string): NodeKind | null {
   if (id.startsWith('doc:')) return id.includes('#page') ? 'page' : 'doc';
   const prefix = id.slice(0, id.indexOf(':'));
-  const kinds: NodeKind[] = ['line', 'ev', 'py', 'agency', 'asset', 'household', 'qa', 'msg', 'call', 'ref', 'timeline', 'version', 'diag', 'att'];
+  const kinds: NodeKind[] = ['line', 'ev', 'py', 'agency', 'asset', 'household', 'qa', 'msg', 'call', 'ref', 'timeline', 'version', 'diag', 'att', 'related'];
   return (kinds as string[]).includes(prefix) ? (prefix as NodeKind) : null;
 }
 

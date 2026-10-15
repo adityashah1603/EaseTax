@@ -28,6 +28,8 @@ import { buildGraph, type Graph } from './graph/graph.ts';
 import type { AppendInput, EventStore } from './events/store.ts';
 import { WorkState } from './state/state.ts';
 import { runChecks, type CheckContext } from './checks/index.ts';
+import { relatedConsistency } from './checks/related.ts';
+import { relatedReturns } from './baseline/related.ts';
 import { assertCan, canSignLevel, maskDeep, maskText, maskValue, PolicyError, RULES, SENSITIVE_VALUE_TYPES, actorsFrom } from './policy/policy.ts';
 
 export type Listener = (events: WorkEvent[]) => void;
@@ -115,9 +117,8 @@ export class Workpaper {
 
   // ---------------------------------------------------------------- issues
 
-  issues(): IssueDto[] {
-    if (this.issuesCache) return this.issuesCache;
-    const ctx: CheckContext = {
+  checkContext(): CheckContext {
+    return {
       b: this.b,
       g: this.g,
       state: this.state,
@@ -129,6 +130,11 @@ export class Workpaper {
         return c ? { ...e, value: c.correctedValue as ExtractedValue['value'], text_as_read: String(c.correctedValue) } : e;
       },
     };
+  }
+
+  issues(): IssueDto[] {
+    if (this.issuesCache) return this.issuesCache;
+    const ctx = this.checkContext();
     // Check text may quote document content; mask it like any other outbound text (D-10).
     const found = runChecks(ctx).map((i) => ({
       ...i,
@@ -311,6 +317,14 @@ export class Workpaper {
         break;
       }
     }
+    if (kind === 'related') {
+      const r = relatedReturns(this.b).find((x) => x.id === id);
+      if (r) {
+        s.label = `${r.who}: ${r.form.replace(/\s*\(.*$/, '')}`;
+        s.sublabel = `Related return · prepared by ${r.preparedBy}${r.docIds.length ? ` · in packet: ${r.docIds.join(', ')}` : ' · not in packet'}`;
+      }
+    }
+    s.revision = this.revision(id);
     if (id.startsWith('question:')) {
       const q = this.state.questions.get(id.slice(9));
       s.kind = 'question';
@@ -356,6 +370,7 @@ export class Workpaper {
       verifications,
       adjustments: [...this.state.adjustments.values()].filter((a) => a.nodeId === id),
       corrections: this.correctionsFor(id),
+      consistency: id.startsWith('related:') ? relatedConsistency(this.checkContext()).get(id) ?? [] : undefined,
       recordCorrections: id.startsWith('household:')
         ? [...this.state.householdCorrections.values()].filter((c) => c.personId === id.slice(10)).map((c) => this.maskHousehold(c))
         : [],
@@ -401,6 +416,9 @@ export class Workpaper {
         break;
       case 'timeline':
         raw = this.b.timeline.find((x) => `timeline:${x.id}` === id);
+        break;
+      case 'related':
+        raw = relatedReturns(this.b).find((x) => x.id === id);
         break;
       default:
         raw = this.rawValue(id);
@@ -599,8 +617,9 @@ export class Workpaper {
 
   // ---------------------------------------------------------------- commands
 
-  verify(actor: Actor, nodeIds: string[], type: string, note?: string, evidence: string[] = []) {
+  verify(actor: Actor, nodeIds: string[], type: string, note?: string, evidence: string[] = [], expected: Record<string, number> = {}) {
     assertCan(actor, 'verify');
+    for (const id of nodeIds) this.assertFresh(id, expected[id]);
     const types = this.standards().verification_types;
     if (!types.includes(type)) throw new PolicyError(`Unknown verification type ${type}`, 'invalid');
     const batchId = nodeIds.length > 1 ? randomUUID() : undefined;
@@ -618,8 +637,9 @@ export class Workpaper {
     );
   }
 
-  proposeAdjustment(actor: Actor, nodeId: string, newValue: unknown, reason: string, authority?: string) {
+  proposeAdjustment(actor: Actor, nodeId: string, newValue: unknown, reason: string, authority?: string, revision?: number) {
     assertCan(actor, 'adjust');
+    this.assertFresh(nodeId, revision);
     if (!reason?.trim()) throw new PolicyError('An adjustment needs a reason', 'invalid');
     const p = parseLineId(nodeId);
     if (!p || p.version !== this.version) throw new PolicyError(`Adjust lines of the current version (${this.version}) only`, 'invalid');
@@ -695,6 +715,38 @@ export class Workpaper {
     return this.commit(actor, [{ type: 'events.undone', payload: { eventIds: ids.map((e) => e.id) } }]);
   }
 
+  // ---------------------------------------------------------------- revisions (D-57)
+
+  /**
+   * A node's revision: the seq of the last event that changed its value or its verification
+   * (adjustments, read and household corrections, verifications). Notes and questions don't count.
+   */
+  revision(nodeId: string): number {
+    const h = this.state.history.get(nodeId) ?? [];
+    let rev = 0;
+    for (const e of h) if (REVISING.test(e.type) && e.seq > rev) rev = e.seq;
+    return rev;
+  }
+
+  /**
+   * Refuse a write made against a stale view (D-57). `expected` is the revision the caller saw;
+   * undefined means the caller didn't say (API clients, scripts), which is allowed.
+   */
+  assertFresh(nodeId: string, expected: number | undefined) {
+    if (expected === undefined || expected === null) return;
+    const now = this.revision(nodeId);
+    if (now <= expected) return;
+    const changes = (this.state.history.get(nodeId) ?? []).filter((e) => e.seq > expected && REVISING.test(e.type)).map((e) => this.publicEvent(e));
+    const last = changes.at(-1)!;
+    const who = this.actors.find((a) => a.id === last.actor)?.name ?? last.actor;
+    throw new PolicyError(
+      `${who} changed this since you opened it (${last.type.replace(/\./g, ' ')}). Review the change and try again.`,
+      'conflict',
+      undefined,
+      { nodeId, revision: now, changes },
+    );
+  }
+
   // ---------------------------------------------------------------- read corrections
 
   /**
@@ -745,8 +797,9 @@ export class Workpaper {
     return { ...e, payload: { ...p, originalValue: maskValue(p.originalValue), correctedValue: maskValue(p.correctedValue) } } as WorkEvent;
   }
 
-  correctRead(actor: Actor, evNodeId: string, rawValue: unknown, reason: string) {
+  correctRead(actor: Actor, evNodeId: string, rawValue: unknown, reason: string, revision?: number) {
     assertCan(actor, 'verify');
+    this.assertFresh(evNodeId.startsWith('ev:') ? evNodeId : `ev:${evNodeId}`, revision);
     if (!reason?.trim()) throw new PolicyError('Say why the read is wrong (e.g. what the page prints)', 'invalid');
     const evId = evNodeId.replace(/^ev:/, '');
     const e = this.b.evs.get(evId);
@@ -801,8 +854,9 @@ export class Workpaper {
    * cite the client's own confirmation: an answered question to the client about this person,
    * or a message from the client.
    */
-  correctHousehold(actor: Actor, personId: string, field: string, rawValue: unknown, evidenceId: string, reason: string) {
+  correctHousehold(actor: Actor, personId: string, field: string, rawValue: unknown, evidenceId: string, reason: string, revision?: number) {
     assertCan(actor, 'verify');
+    this.assertFresh(`household:${personId}`, revision);
     const raw = this.b.packet.household.people.find((x) => x.id === personId);
     if (!raw) throw new PolicyError(`No household member ${personId}`, 'not_found');
     if (!HOUSEHOLD_FIELDS.includes(field as any)) throw new PolicyError(`Only ${HOUSEHOLD_FIELDS.join(', ')} can be corrected`, 'invalid');
@@ -865,6 +919,9 @@ export class Workpaper {
     if (!this.g.nodes.has(id) && !nodeKind(id)) throw new PolicyError(`Unknown node ${id}`, 'not_found');
   }
 }
+
+/** Event types that change a node's value or verification, and so move its revision (D-57). */
+const REVISING = /^(adjustment\.|read\.|household\.|verification\.)/;
 
 /** Household fields a preparer may correct (with the client's confirmation), and which are sensitive. */
 const HOUSEHOLD_FIELDS = ['ssn', 'name', 'dob'] as const;
