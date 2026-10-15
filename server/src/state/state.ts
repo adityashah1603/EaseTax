@@ -5,6 +5,7 @@ import type {
   AdjustmentDto,
   AttachmentDto,
   ReadCorrectionDto,
+  HouseholdCorrectionDto,
   DispositionDto,
   IssueDto,
   JudgmentDto,
@@ -42,6 +43,9 @@ export class WorkState {
   corrections = new Map<string, ReadCorrectionDto>();
   /** ev id (e.g. "ev-1045") -> correction currently in force */
   activeCorrection = new Map<string, string>();
+  householdCorrections = new Map<string, HouseholdCorrectionDto>();
+  /** "<personId>.<field>" -> household correction in force */
+  activeHousehold = new Map<string, string>();
   issueStatus = new Map<string, { status: 'resolved' | 'accepted' | 'open'; resolution?: string } & Stamped>();
   humanIssues = new Map<string, IssueDto>();
   notes = new Map<string, ReviewNoteDto>();
@@ -170,6 +174,36 @@ export class WorkState {
         if (this.activeCorrection.get(c.evId) === c.id) this.activeCorrection.delete(c.evId);
         this.touchWithLines(`ev:${c.evId}`, e);
         this.reopenSignoffs([`ev:${c.evId}`], e);
+        break;
+      }
+      case 'household.corrected': {
+        const key = `${p.personId}.${p.field}`;
+        const prev = this.activeHousehold.get(key);
+        if (prev) this.householdCorrections.get(prev)!.status = 'reverted';
+        this.householdCorrections.set(p.correctionId, {
+          id: p.correctionId,
+          personId: p.personId,
+          field: p.field,
+          originalValue: p.originalValue,
+          correctedValue: p.correctedValue,
+          evidenceId: p.evidenceId,
+          reason: e.reason ?? '',
+          status: 'in_force',
+          ...stamp,
+        });
+        this.activeHousehold.set(key, p.correctionId);
+        this.touchWithLines(`household:${p.personId}`, e);
+        this.reopenSignoffs([`household:${p.personId}`], e);
+        break;
+      }
+      case 'household.correction_reverted': {
+        const c = this.householdCorrections.get(p.correctionId);
+        if (!c || c.status !== 'in_force') break;
+        c.status = 'reverted';
+        const key = `${c.personId}.${c.field}`;
+        if (this.activeHousehold.get(key) === c.id) this.activeHousehold.delete(key);
+        this.touchWithLines(`household:${c.personId}`, e);
+        this.reopenSignoffs([`household:${c.personId}`], e);
         break;
       }
       case 'issue.raised':
@@ -333,6 +367,12 @@ export class WorkState {
     const list = this.history.get(nodeId);
     if (list) list.push(e);
     else this.history.set(nodeId, [e]);
+  }
+
+  /** The household correction in force for a person's field, if any. */
+  householdCorrectionFor(personId: string, field: string): HouseholdCorrectionDto | undefined {
+    const id = this.activeHousehold.get(`${personId}.${field}`);
+    return id ? this.householdCorrections.get(id) : undefined;
   }
 
   /** The correction in force for an extracted value (raw id, e.g. "ev-1045"). */

@@ -128,6 +128,8 @@ function ApproveAndSign() {
   const ap = st?.clientApproval;
   const valid = signers.length > 0 && signers.every((s) => /^\d{5}$/.test(pins[s.id] ?? '')) && consent;
   const accepted = st?.submissions.filter((s) => s.status === 'accepted') ?? [];
+  // D-48: the client signs a reviewed return, so approval opens only after the partner's sign-off.
+  const open = st?.approvalOpen?.open ?? false;
 
   const sign = async () => {
     setBusy(true);
@@ -170,14 +172,21 @@ function ApproveAndSign() {
             ) : (
               <div className="mb-2 rounded border border-amber bg-amber-soft px-3 py-2 text-sm text-amber-ink">
                 <span className="font-semibold">Your approval needs renewing.</span> You approved on {fmtDateTime(ap.at)}, but the return changed afterwards, so that approval no longer
-                covers it. Please review the figures above and sign again.
+                covers it. {open ? 'Please review the figures above and sign again.' : "We'll let you know when it's ready to sign again."}
               </div>
             )
-          ) : (
+          ) : open ? (
             <p className="mb-2 text-sm text-graphite">When you're happy with the figures above, approve the return and sign the e-file authorization with your PINs.</p>
+          ) : (
+            <p className="mb-2 text-sm text-graphite">{st?.approvalOpen?.reason ?? "Your return isn't ready for your approval yet."}</p>
           )}
           {!st?.filed && !signing && (
-            <button className="btn-primary" onClick={() => (setErr(null), setSigning(true))} disabled={actor?.kind !== 'client'}>
+            <button
+              className="btn-primary"
+              onClick={() => (setErr(null), setSigning(true))}
+              disabled={actor?.kind !== 'client' || !open}
+              title={open ? undefined : st?.approvalOpen?.reason}
+            >
               <PenLine size={14} /> {ap ? (ap.current ? 'Sign again' : 'Review and sign again') : 'Approve and sign'}
             </button>
           )}

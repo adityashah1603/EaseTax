@@ -112,6 +112,8 @@ export interface SnapshotMetaDto {
 export interface FilingStatusDto {
   extension: { federal: number; california: number; by: string; at: string } | null;
   clientApproval: { by: string; at: string; pins: Record<string, string>; returnHash: string; current: boolean } | null;
+  /** Whether the client may approve now (D-48: only after a valid partner sign-off on the return). */
+  approvalOpen: { open: boolean; reason?: string };
   submissions: SubmissionDto[];
   snapshots: SnapshotMetaDto[];
   amendments: { id: string; baseSnapshotId: string; baseSeq: number; reason?: string; by: string; at: string }[];

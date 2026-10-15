@@ -27,6 +27,9 @@ export interface EventPayloads {
   /** A human corrects what the pipeline read for one extracted value; the original is kept. */
   'read.corrected': { correctionId: string; evId: string; originalValue: unknown; correctedValue: unknown; valueType: string };
   'read.correction_reverted': { correctionId: string };
+  /** A correction to client-entered household data, citing the client's own confirmation. */
+  'household.corrected': { correctionId: string; personId: string; field: string; originalValue: unknown; correctedValue: unknown; evidenceId: string };
+  'household.correction_reverted': { correctionId: string };
   'issue.resolved': { issueId: string; status: 'resolved' | 'accepted'; resolution: string };
   'issue.reopened': { issueId: string };
   'issue.raised': { issueId: string; nodeIds: string[]; title: string; detail?: string; severity: 'info' | 'warning' | 'error' };

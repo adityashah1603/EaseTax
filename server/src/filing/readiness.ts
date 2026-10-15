@@ -111,6 +111,35 @@ function signoffRule(ctx: ViewCtx, level: 'reviewer' | 'partner') {
   return { ok: false, reason: reopened ? `${level} sign-off on the return was reopened by a later change` : `No valid ${level} sign-off on the whole return` };
 }
 
+/**
+ * A rejected e-file can't be resubmitted until its cause is fixed (D-49). Today's mapping: a
+ * rejection naming a household member blocks while that person's identity check still fires,
+ * whatever the issue's status. Resolving or accepting the issue doesn't count; correcting the
+ * record does.
+ */
+function rejectionBlockers(wp: Workpaper): ReadinessDto['blockers'] {
+  const st = filingState(wp);
+  const out: ReadinessDto['blockers'] = [];
+  for (const j of ['federal', 'california'] as const) {
+    const last = st.submissions.filter((s) => s.jurisdiction === j).at(-1);
+    if (!last || last.status !== 'rejected') continue;
+    for (const err of last.errors ?? []) {
+      for (const p of wp.b.packet.household.people) {
+        if (!String(err.message).includes(p.name)) continue;
+        const cause = wp.issues().find((i) => /SSN_MISMATCH$/.test(i.code) && i.nodeIds.includes(`household:${p.id}`));
+        if (cause) {
+          out.push({
+            code: 'EFILE_REJECTION_NOT_FIXED',
+            text: `The ${j} e-file was rejected (${err.code}) for ${p.name}, and the household record still disagrees with the documents. Correct the record with the client's confirmation before resubmitting.`,
+            nodeIds: [`household:${p.id}`, ...cause.nodeIds.slice(1, 4)],
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
 export function readiness(wp: Workpaper): ReadinessDto {
   const ctx = new ViewCtx(wp);
   const manual = new Set(wp.state.filingSteps.filter((s) => s.step === 'manual_step').map((s) => String((s.data as any)?.step)));
@@ -124,5 +153,6 @@ export function readiness(wp: Workpaper): ReadinessDto {
     if (n.blocking && n.status === 'open') blockers.push({ code: 'BLOCKING_NOTE', text: `Open blocking review note: ${n.thread[0]?.text ?? ''}`, nodeIds: n.nodeIds });
   for (const a of wp.state.adjustments.values())
     if (a.status === 'proposed') blockers.push({ code: 'PENDING_PARTNER_APPROVAL', text: `Adjustment awaiting partner approval: ${a.reason}`, nodeIds: [a.nodeId] });
+  blockers.push(...rejectionBlockers(wp));
   return { ready: steps.every((s) => s.ok) && blockers.length === 0, seq: wp.state.seq, steps, blockers };
 }

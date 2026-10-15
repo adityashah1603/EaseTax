@@ -49,6 +49,8 @@ export interface FilingSnapshotContent {
     varianceExplanations: unknown[];
     reconciliations: unknown[];
     areasConsidered: unknown[];
+    readCorrections?: unknown[];
+    householdCorrections?: unknown[];
     issues: IssueDto[];
   };
 }
@@ -66,7 +68,8 @@ export function freezeContent(wp: Workpaper, kind = 'filing'): FilingSnapshotCon
   const lines: FrozenLine[] = ver.lines
     .map((l) => {
       const adj = s.effectiveAdjustment(lineId(wp.version, l.key));
-      return { key: l.key, form: l.form, line: l.line, label: l.label, jurisdiction: l.jurisdiction, engineValue: l.value, value: adj ? adj.newValue : l.value, adjusted: !!adj };
+      // The description as corrected (e.g. a fixed provider EIN), frozen with the return (D-47).
+      return { key: l.key, form: l.form, line: l.line, label: wp.lineLabel(wp.version, l), jurisdiction: l.jurisdiction, engineValue: l.value, value: adj ? adj.newValue : l.value, adjusted: !!adj };
     })
     .sort((a, b) => a.key.localeCompare(b.key));
   const summary = wp.summary();
@@ -96,6 +99,9 @@ export function freezeContent(wp: Workpaper, kind = 'filing'): FilingSnapshotCon
       varianceExplanations: entries(s.varianceExplanations, 'nodeId'),
       reconciliations: entries(s.reconciliations, 'reconciliationId'),
       areasConsidered: entries(s.areaConsidered, 'areaId'),
+      // Corrections in force at filing, masked like everything else that leaves the workpaper.
+      readCorrections: byId([...s.activeCorrection.values()].map((id) => s.corrections.get(id)!)).map((c) => wp.nodeDetailCorrection(c)),
+      householdCorrections: byId([...s.activeHousehold.values()].map((id) => s.householdCorrections.get(id)!)).map((c) => wp.publicHousehold(c)),
       issues: [...wp.issues()].sort((a, b) => a.id.localeCompare(b.id)),
     },
   };

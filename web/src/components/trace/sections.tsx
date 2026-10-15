@@ -1,5 +1,5 @@
 // The record around a node: issues, adjustments, notes, questions, evidence, history.
-import type { AdjustmentDto, CommandResult, IssueDto, NodeDetail, QuestionDto, ReadCorrectionDto, ReviewNoteDto, VerificationDto, WorkEvent } from '@easetax/shared';
+import type { AdjustmentDto, CommandResult, HouseholdCorrectionDto, IssueDto, NodeDetail, QuestionDto, ReadCorrectionDto, ReviewNoteDto, VerificationDto, WorkEvent } from '@easetax/shared';
 import clsx from 'clsx';
 import { Lightbulb } from 'lucide-react';
 import { useState } from 'react';
@@ -234,6 +234,55 @@ export function CorrectionCard({ c, showField }: { c: ReadCorrectionDto; showFie
           onSubmit={(reason) =>
             run(() => api<CommandResult>(`/api/reads/corrections/${c.id}/revert`, { method: 'POST', body: { reason } }), { done: 'Correction reverted' })
           }
+        />
+      )}
+    </div>
+  );
+}
+
+/** A correction to client-entered household data, with the client confirmation it relied on. */
+export function RecordCorrectionCard({ c }: { c: HouseholdCorrectionDto }) {
+  const { can, nameOf } = useSession();
+  const drawer = useDrawer();
+  const run = useCommand();
+  const [reverting, setReverting] = useState(false);
+  const inForce = c.status === 'in_force';
+  return (
+    <div className="mb-2 rounded border border-rule bg-panel px-3 py-2 text-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div className="num">
+          <span className="mr-1.5 text-xs text-graphite">{c.field.toUpperCase()}</span>
+          <span className="text-faint line-through">{fmtValue(c.originalValue)}</span>
+          <span className="mx-1.5 text-faint">to</span>
+          <span className="font-semibold text-blue-ink">{fmtValue(c.correctedValue)}</span>
+        </div>
+        <span className={clsx('rounded px-1.5 text-2xs font-semibold', inForce ? 'bg-blue-soft text-blue-ink' : 'bg-ruleSoft text-graphite')}>{inForce ? 'In force' : 'Reverted'}</span>
+      </div>
+      <div className="mt-1">{c.reason}</div>
+      <div className="mt-1 text-xs text-faint">
+        Corrected by {nameOf(c.by)}, {fmtDateTime(c.at)} · client confirmation{' '}
+        {c.evidenceId.startsWith('msg:') ? (
+          <button className="underline underline-offset-2" onClick={() => drawer.open(c.evidenceId)}>
+            {c.evidenceId}
+          </button>
+        ) : (
+          <span>{c.evidenceId}</span>
+        )}
+      </div>
+      {inForce && can('verify') && (
+        <div className="mt-1.5">
+          <button className="btn-ghost text-xs" onClick={() => setReverting(true)}>
+            Revert to the client's original entry
+          </button>
+        </div>
+      )}
+      {reverting && (
+        <ReasonDialog
+          title="Revert correction"
+          label="Why"
+          confirm="Revert"
+          onClose={() => setReverting(false)}
+          onSubmit={(reason) => run(() => api<CommandResult>(`/api/household/corrections/${c.id}/revert`, { method: 'POST', body: { reason } }), { done: 'Correction reverted' })}
         />
       )}
     </div>

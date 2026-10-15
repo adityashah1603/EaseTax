@@ -183,6 +183,12 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     return ok(wp.correctRead(who(req), b.evId, b.value, b.reason));
   });
   app.post('/api/reads/corrections/:id/revert', async (req) => ok(wp.revertCorrection(who(req), (req.params as any).id, (req.body as any)?.reason)));
+  // Correct client-entered household data, citing the client's confirmation (D-47).
+  app.post('/api/household/corrections', async (req) => {
+    const b = req.body as { personId: string; field: string; value: unknown; evidenceId: string; reason: string };
+    return ok(wp.correctHousehold(who(req), b.personId, b.field, b.value, b.evidenceId, b.reason));
+  });
+  app.post('/api/household/corrections/:id/revert', async (req) => ok(wp.revertHouseholdCorrection(who(req), (req.params as any).id, (req.body as any)?.reason)));
   app.post('/api/undo', async (req) => ok(wp.undo(who(req), req.body as { batchId?: string; eventId?: string })));
 
   app.get('/api/issues', async () => wp.issues());
@@ -362,7 +368,7 @@ function unmaskedField(wp: Workpaper, nodeId: string, field: string): unknown {
   if (kind === 'household') {
     const id = nodeId.slice(10);
     if (id === 'bank') return (wp.b.packet.household.bank_account_for_refund_or_payment as any)[field];
-    return (wp.b.packet.household.people.find((p) => p.id === id) as any)?.[field];
+    return (wp.person(id) as any)?.[field];
   }
   if (kind === 'ev') return wp.b.evs.get(nodeId.slice(3))?.value;
   if (kind === 'page') {

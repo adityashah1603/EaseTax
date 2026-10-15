@@ -32,7 +32,7 @@ export function registerFilingRoutes(app: FastifyInstance, wp: Workpaper) {
     const a = who(req);
     const st = filingState(wp);
     // Clients see their own approval and the submission outcomes, not workpaper snapshots.
-    return a.kind === 'client' ? { clientApproval: st.clientApproval, submissions: st.submissions.map(({ id, jurisdiction, status, errors }) => ({ id, jurisdiction, status, errors })), filed: st.filed } : st;
+    return a.kind === 'client' ? { clientApproval: st.clientApproval, approvalOpen: st.approvalOpen, submissions: st.submissions.map(({ id, jurisdiction, status, errors }) => ({ id, jurisdiction, status, errors })), filed: st.filed } : st;
   });
   app.post('/api/filing/steps/manual', async (req) => {
     const b = req.body as { step: string; note?: string };

@@ -41,13 +41,22 @@ export function filingState(wp: Workpaper): FilingStatusDto {
   const accepted = (j: string) => submissions.some((x) => x.jurisdiction === j && x.status === 'accepted');
   return {
     extension,
-    clientApproval: approval ? { ...approval, current: approval.returnHash === wp.scopeHash('return') } : null,
+    // Current only while the return is unchanged AND the partner's sign-off still stands (D-48).
+    clientApproval: approval ? { ...approval, current: approval.returnHash === wp.scopeHash('return') && partnerSignedReturn(wp) } : null,
+    approvalOpen: partnerSignedReturn(wp)
+      ? { open: true }
+      : { open: false, reason: "Your preparer's partner hasn't signed off the return yet. You can approve it once they have." },
     submissions,
     snapshots: wp.store.snapshots(),
     amendments,
     noticeCases,
     filed: accepted('federal') && accepted('california'),
   };
+}
+
+/** True while a partner sign-off on the whole return is valid (not reopened or withdrawn). */
+export function partnerSignedReturn(wp: Workpaper): boolean {
+  return [...wp.state.signoffs.values()].some((s) => s.scope === 'return' && s.level === 'partner' && s.status === 'valid');
 }
 
 /** The snapshot that is "the filed return": the latest one behind an accepted federal submission, else the latest filing snapshot. */

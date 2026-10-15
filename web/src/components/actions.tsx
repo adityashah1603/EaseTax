@@ -3,7 +3,7 @@
 import type { CommandResult, NodeSummary } from '@easetax/shared';
 import { useState } from 'react';
 import { api, enc, upload } from '../api/client';
-import { undoTargetsFor, useInvalidateAll, useSearch, useStandards } from '../api/hooks';
+import { undoTargetsFor, useInvalidateAll, useIssues, useQuestions, useSearch, useStandards } from '../api/hooks';
 import { humanize, fmtValue } from '../lib/format';
 import { takePrefill } from '../state/drawer';
 import { useSession } from '../state/session';
@@ -211,6 +211,92 @@ export function CorrectReadDialog({ node, onClose }: { node: NodeSummary; onClos
             Cancel
           </button>
           <button className="btn-primary" disabled={s.busy || !value.trim() || !reason.trim()}>
+            Record correction
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Correct client-entered household data (D-47). The household record is the client's, so the
+ * correction must cite the client's own confirmation: an answered question about this person,
+ * or a message from the client. The original entry is kept.
+ */
+export function CorrectRecordDialog({ node, onClose, onAsk }: { node: NodeSummary; onClose: () => void; onAsk: () => void }) {
+  const personId = node.id.slice('household:'.length);
+  const questions = useQuestions();
+  const issues = useIssues();
+  const [field, setField] = useState<'ssn' | 'name' | 'dob'>('ssn');
+  const [value, setValue] = useState('');
+  const [evidenceId, setEvidenceId] = useState('');
+  const [reason, setReason] = useState('');
+  const run = useCommand();
+  const s = useSubmit();
+  // Confirmations the server will accept: answered questions to the client about this person,
+  // and client messages that our identity check already linked to this person.
+  const answered = (questions.data ?? []).filter((q) => q.to === 'client' && q.thread.length > 1 && q.nodeIds.includes(node.id));
+  const messages = [...new Set((issues.data ?? []).filter((i) => i.nodeIds.includes(node.id)).flatMap((i) => i.nodeIds.filter((n) => n.startsWith('msg:'))))];
+  const options = [
+    ...answered.map((q) => ({ id: `question:${q.id}`, text: `Answer: "${q.thread[q.thread.length - 1]!.text}"` })),
+    ...messages.map((m) => ({ id: m, text: `Client message ${m.slice(4)}` })),
+  ];
+  const chosen = evidenceId || options[0]?.id || '';
+  return (
+    <Modal title="Correct the household record" onClose={onClose} width={520}>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const ok = await s.go(() =>
+            run(() => api<CommandResult>('/api/household/corrections', { method: 'POST', body: { personId, field, value, evidenceId: chosen, reason } }), {
+              done: `${node.label}: record corrected. The client's original entry is kept.`,
+            }),
+          );
+          if (ok) onClose();
+        }}
+      >
+        <p className="mb-3 text-sm text-graphite">
+          {node.label}'s details come from the client's organizer. Correct them only with the client's confirmation; the original entry is kept with your reason.
+        </p>
+        <Field label="Field">
+          <select className="input" value={field} onChange={(e) => setField(e.target.value as 'ssn' | 'name' | 'dob')}>
+            <option value="ssn">SSN</option>
+            <option value="name">Name</option>
+            <option value="dob">Date of birth</option>
+          </select>
+        </Field>
+        <Field label="Correct value" hint={field === 'ssn' ? 'As on the Social Security card: NNN-NN-NNNN. Needs sensitive-data clearance; shown masked afterwards.' : field === 'dob' ? 'YYYY-MM-DD' : undefined}>
+          <input className="input num" value={value} onChange={(e) => setValue(e.target.value)} autoComplete="off" autoFocus />
+        </Field>
+        <Field label="Client's confirmation" hint="Required by the server: an answered question to the client about this person, or the client's own message.">
+          {options.length ? (
+            <select className="input" value={chosen} onChange={(e) => setEvidenceId(e.target.value)}>
+              {options.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.text}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="rounded border border-amber bg-amber-soft px-2 py-1.5 text-xs text-amber-ink">
+              No confirmation from the client yet.{' '}
+              <button type="button" className="font-semibold underline underline-offset-2" onClick={onAsk}>
+                Ask the client
+              </button>{' '}
+              first; their answer becomes the evidence.
+            </div>
+          )}
+        </Field>
+        <Field label="Why" hint="Required. Kept in the history with your name.">
+          <textarea className="input" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Client confirmed; agrees with the SS card (D71) and the 2024 return" />
+        </Field>
+        <ErrorBox error={s.error} />
+        <div className="mt-3 flex justify-end gap-2">
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn-primary" disabled={s.busy || !value.trim() || !reason.trim() || !chosen}>
             Record correction
           </button>
         </div>

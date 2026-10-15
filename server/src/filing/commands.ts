@@ -5,7 +5,7 @@ import type { Actor, FrozenLine, SubmissionDto } from '@easetax/shared';
 import type { Workpaper } from '../workpaper.ts';
 import { assertCan, PolicyError } from '../policy/policy.ts';
 import { readiness } from './readiness.ts';
-import { filedSnapshotId, filingState } from './state.ts';
+import { filedSnapshotId, filingState, partnerSignedReturn } from './state.ts';
 import { freeze, loadSnapshot, type FilingSnapshotContent } from './snapshot.ts';
 
 const step = (wp: Workpaper, actor: Actor, name: string, data: unknown, reason?: string) =>
@@ -26,6 +26,10 @@ export function recordExtension(wp: Workpaper, actor: Actor, body: { federal?: n
  */
 export function recordClientApproval(wp: Workpaper, actor: Actor, body: { pins?: Record<string, string>; consent?: boolean }) {
   assertCan(actor, 'client_approval');
+  // The client approves a reviewed return: only after the partner has signed it off (D-48).
+  if (!partnerSignedReturn(wp)) {
+    throw new PolicyError("The return isn't ready for your approval yet: the partner hasn't signed it off.", 'policy', 'Client approval follows partner sign-off.');
+  }
   if (body.consent !== true) throw new PolicyError('Approval requires explicit consent to e-file', 'invalid');
   const pins = body.pins ?? {};
   if (!Object.keys(pins).length) throw new PolicyError('Provide the signer PIN(s) for Form 8879', 'invalid');
@@ -102,15 +106,26 @@ export function amendmentDiff(wp: Workpaper, amendmentId: string) {
   if (!am) throw new PolicyError(`No amendment ${amendmentId}`, 'not_found');
   const snap = loadSnapshot<FilingSnapshotContent>(wp, am.baseSnapshotId);
   const frozen = new Map<string, FrozenLine>(snap.content.lines.map((l) => [l.key, l]));
-  const diffs: { key: string; label: string; filed: unknown; current: unknown; change: 'changed' | 'added' | 'removed'; nodeId: string }[] = [];
+  const diffs: { key: string; label: string; filed: unknown; current: unknown; change: 'changed' | 'added' | 'removed'; nodeId: string; what?: 'value' | 'description' }[] = [];
   const seen = new Set<string>();
   for (const l of wp.lines({})) {
     seen.add(l.key);
     const f = frozen.get(l.key);
     if (!f) diffs.push({ key: l.key, label: l.label, filed: undefined, current: l.effectiveValue, change: 'added', nodeId: l.id });
     else if (JSON.stringify(f.value) !== JSON.stringify(l.effectiveValue)) diffs.push({ key: l.key, label: l.label, filed: f.value, current: l.effectiveValue, change: 'changed', nodeId: l.id });
+    // A corrected read can change what the line says (e.g. a provider's EIN) without changing its amount.
+    else if (f.label !== l.label) diffs.push({ key: l.key, label: l.label, filed: f.label, current: l.label, change: 'changed', nodeId: l.id, what: 'description' });
   }
   for (const f of frozen.values()) if (!seen.has(f.key)) diffs.push({ key: f.key, label: f.label, filed: f.value, current: undefined, change: 'removed', nodeId: `line:${snap.content.version}:${f.key}` });
-  const events = wp.state.events.filter((e) => e.seq > snap.content.seq && !wp.state.undone.has(e.id) && e.type.startsWith('adjustment.'));
-  return { amendment: am, base: { snapshotId: am.baseSnapshotId, seq: snap.content.seq, contentHash: snap.contentHash }, diffs, changesSinceFiling: events };
+  const events = wp.state.events
+    .filter((e) => e.seq > snap.content.seq && !wp.state.undone.has(e.id) && /^(adjustment|read|household)\./.test(e.type))
+    .map((e) => wp.publicEvent(e));
+  // Corrections in force now vs at filing (snapshots before D-47 carry none).
+  const filedIds = new Set([...(snap.content.state.readCorrections ?? []), ...(snap.content.state.householdCorrections ?? [])].map((c: any) => c.id));
+  const nowIds = new Set([...wp.state.activeCorrection.values(), ...wp.state.activeHousehold.values()]);
+  const correctionChanges = [
+    ...[...nowIds].filter((id) => !filedIds.has(id)).map((id) => ({ correctionId: id, change: 'added' as const })),
+    ...[...filedIds].filter((id) => !nowIds.has(id)).map((id) => ({ correctionId: id, change: 'reverted' as const })),
+  ];
+  return { amendment: am, base: { snapshotId: am.baseSnapshotId, seq: snap.content.seq, contentHash: snap.contentHash }, diffs, correctionChanges, changesSinceFiling: events };
 }

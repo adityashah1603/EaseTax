@@ -111,3 +111,36 @@ describe('where a source landed (W2)', () => {
     expect(t.children[0]!.node.sublabel).toContain('engine v1');
   });
 });
+
+describe('household corrections (D-47)', () => {
+  it("accepts the client's own message as confirmation and clears the identity issue", () => {
+    expect(wp.issues().some((i) => i.code === 'DEPENDENT_SSN_MISMATCH')).toBe(true);
+    wp.correctHousehold(A('st-01'), 'theo', 'ssn', '666-74-3390', 'msg:msg-10', 'Client message msg-10 acknowledges the typo; SS card D71 shows 3390');
+    expect(wp.issues().some((i) => i.code === 'DEPENDENT_SSN_MISMATCH')).toBe(false);
+    expect(baseline.packet.household.people.find((p) => p.id === 'theo')!.ssn).toBe('666-74-3309');
+  });
+
+  it('refuses a staff message or an unrelated question as confirmation', () => {
+    wp.commit(A('st-01'), [{ type: 'question.asked', payload: { questionId: 'q-ada', to: 'client', nodeIds: ['household:ada'], text: 'Ada?' } }]);
+    wp.commit(A('cu-01'), [{ type: 'question.answered', payload: { questionId: 'q-ada', text: 'yes' } }]);
+    expect(() => wp.correctHousehold(A('st-01'), 'theo', 'ssn', '666-74-3390', 'question:q-ada', 'x')).toThrow(/isn't about Theo/);
+    expect(() => wp.correctHousehold(A('st-01'), 'theo', 'nickname', 'T', 'msg:msg-10', 'x')).toThrow(/Only ssn, name, dob/);
+  });
+
+  it('keeps household SSN corrections masked everywhere they leave the server', () => {
+    const [ev] = wp.correctHousehold(A('st-01'), 'theo', 'ssn', '666-74-3390', 'msg:msg-10', 'typo');
+    const out = JSON.stringify([wp.publicEvent(ev!), wp.nodeDetail('household:theo', A('st-02'))]);
+    expect(out).not.toContain('666-74-3390');
+    expect(out).not.toContain('666-74-3309');
+  });
+});
+
+describe('corrections and filing snapshots', () => {
+  it('freezes the corrected description, and a later correction shows in the amendment', async () => {
+    const { freezeContent } = await import('../src/filing/snapshot.ts');
+    wp.correctRead(A('st-01'), 'ev:ev-1045', '74-3829156', 'per page');
+    const frozen = freezeContent(wp);
+    expect(frozen.lines.find((l) => l.key === 'F2441.1b')!.label).toContain('74-3829156');
+    expect((frozen.state.readCorrections ?? []).length).toBe(1);
+  });
+});

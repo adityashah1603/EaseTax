@@ -22,7 +22,9 @@ registerCheck({
   run(ctx) {
     const out: CheckIssue[] = [];
     const pkt = ctx.b.packet;
-    for (const p of pkt.household.people) {
+    for (const raw of pkt.household.people) {
+      // The record as corrected (with the client's confirmation), not as first typed.
+      const p = ctx.effectivePerson(raw);
       const seen: { ssn: string; nodes: string[]; where: string }[] = [];
       // Extracted SSNs on the person's own documents.
       for (const e of pkt.extracted_values) {

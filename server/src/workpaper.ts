@@ -8,7 +8,9 @@ import type {
   DocumentDetailDto,
   DocumentDto,
   ExtractedValue,
+  HouseholdCorrectionDto,
   IssueDto,
+  PacketPerson,
   ReadCorrectionDto,
   LineRow,
   NodeDetail,
@@ -121,6 +123,7 @@ export class Workpaper {
       state: this.state,
       version: this.version,
       lineValue: (k) => this.lineValue(k),
+      effectivePerson: (p) => this.effectivePerson(p),
       effectiveEv: (e) => {
         const c = this.state.correctionFor(e.id);
         return c ? { ...e, value: c.correctedValue as ExtractedValue['value'], text_as_read: String(c.correctedValue) } : e;
@@ -259,7 +262,7 @@ export class Workpaper {
         break;
       }
       case 'household': {
-        const p = this.b.packet.household.people.find((x) => x.id === id.slice(10));
+        const p = this.person(id.slice(10));
         s.label = p ? p.name : id;
         s.sublabel = p ? `${p.role}${p.relationship ? ' · ' + p.relationship : ''}` : undefined;
         break;
@@ -353,6 +356,9 @@ export class Workpaper {
       verifications,
       adjustments: [...this.state.adjustments.values()].filter((a) => a.nodeId === id),
       corrections: this.correctionsFor(id),
+      recordCorrections: id.startsWith('household:')
+        ? [...this.state.householdCorrections.values()].filter((c) => c.personId === id.slice(10)).map((c) => this.maskHousehold(c))
+        : [],
       issues: this.issuesFor(id),
       notes: [...this.state.notes.values()].filter((n) => n.nodeIds.includes(id)),
       questions: [...this.state.questions.values()].filter((q) => q.nodeIds.includes(id)),
@@ -385,7 +391,7 @@ export class Workpaper {
         raw = this.b.evs.get(id.slice(3));
         break;
       case 'household':
-        raw = this.b.packet.household.people.find((x) => x.id === id.slice(10));
+        raw = this.person(id.slice(10));
         break;
       case 'call':
         raw = this.b.calls.get(id.slice(5));
@@ -711,6 +717,11 @@ export class Workpaper {
 
   /** An event as it may leave the server: corrected SSNs and account numbers stay masked (D-10). */
   publicEvent(e: WorkEvent): WorkEvent {
+    if (e.type === 'household.corrected') {
+      const p = e.payload as WorkEvent<'household.corrected'>['payload'];
+      if (!HOUSEHOLD_SENSITIVE.has(p.field)) return e;
+      return { ...e, payload: { ...p, originalValue: maskValue(p.originalValue), correctedValue: maskValue(p.correctedValue) } } as WorkEvent;
+    }
     if (e.type !== 'read.corrected') return e;
     const p = e.payload as WorkEvent<'read.corrected'>['payload'];
     if (!SENSITIVE_VALUE_TYPES.has(p.valueType)) return e;
@@ -738,6 +749,89 @@ export class Workpaper {
     ]);
   }
 
+  // ---------------------------------------------------------------- household corrections (D-47)
+
+  /** A household person with any corrections in force applied. */
+  effectivePerson(p: PacketPerson): PacketPerson {
+    let out = p;
+    for (const field of HOUSEHOLD_FIELDS) {
+      const c = this.state.householdCorrectionFor(p.id, field);
+      if (c) out = { ...out, [field]: c.correctedValue };
+    }
+    return out;
+  }
+
+  person(personId: string): PacketPerson | undefined {
+    const p = this.b.packet.household.people.find((x) => x.id === personId);
+    return p ? this.effectivePerson(p) : undefined;
+  }
+
+  /** A read correction as it may leave the server (masked if sensitive). */
+  nodeDetailCorrection(c: ReadCorrectionDto): ReadCorrectionDto {
+    return this.maskCorrection(c);
+  }
+
+  publicHousehold(c: HouseholdCorrectionDto): HouseholdCorrectionDto {
+    return this.maskHousehold(c);
+  }
+
+  private maskHousehold(c: HouseholdCorrectionDto): HouseholdCorrectionDto {
+    return HOUSEHOLD_SENSITIVE.has(c.field) ? { ...c, originalValue: maskValue(c.originalValue), correctedValue: maskValue(c.correctedValue) } : c;
+  }
+
+  /**
+   * Correct client-entered household data. The record is the client's, so the correction must
+   * cite the client's own confirmation: an answered question to the client about this person,
+   * or a message from the client.
+   */
+  correctHousehold(actor: Actor, personId: string, field: string, rawValue: unknown, evidenceId: string, reason: string) {
+    assertCan(actor, 'verify');
+    const raw = this.b.packet.household.people.find((x) => x.id === personId);
+    if (!raw) throw new PolicyError(`No household member ${personId}`, 'not_found');
+    if (!HOUSEHOLD_FIELDS.includes(field as any)) throw new PolicyError(`Only ${HOUSEHOLD_FIELDS.join(', ')} can be corrected`, 'invalid');
+    if (!reason?.trim()) throw new PolicyError('Say what is being corrected and from which source', 'invalid');
+    if (HOUSEHOLD_SENSITIVE.has(field) && !actor.clearance) {
+      throw new PolicyError('Correcting an SSN needs sensitive-data clearance', 'forbidden', RULES.masking);
+    }
+    this.assertClientConfirmation(personId, raw.name, evidenceId);
+    const value = coerceRead(field === 'ssn' ? 'ssn' : field === 'dob' ? 'date' : 'text', rawValue);
+    const current = this.state.householdCorrectionFor(personId, field)?.correctedValue ?? (raw as any)[field];
+    if (JSON.stringify(current) === JSON.stringify(value)) throw new PolicyError('The record already has that value', 'conflict');
+    return this.commit(actor, [
+      {
+        type: 'household.corrected',
+        payload: { correctionId: randomUUID(), personId, field, originalValue: (raw as any)[field], correctedValue: value, evidenceId },
+        reason,
+      },
+    ]);
+  }
+
+  private assertClientConfirmation(personId: string, name: string, evidenceId: string) {
+    const need = `Cite the client's confirmation: an answered question to the client about ${name}, or a message from the client`;
+    if (evidenceId?.startsWith('question:')) {
+      const q = this.state.questions.get(evidenceId.slice(9));
+      if (!q || q.to !== 'client') throw new PolicyError(`${need}. ${evidenceId} is not a question to the client.`, 'policy');
+      if (q.thread.length < 2) throw new PolicyError(`${need}. The client hasn't answered ${evidenceId} yet.`, 'policy');
+      if (!q.nodeIds.includes(`household:${personId}`)) throw new PolicyError(`${need}. That question isn't about ${name}.`, 'policy');
+      return;
+    }
+    if (evidenceId?.startsWith('msg:')) {
+      const m = this.b.msgs.get(evidenceId.slice(4));
+      const clientNames = this.b.packet.firm.client_users.map((c) => c.name);
+      if (!m || !clientNames.includes(m.from)) throw new PolicyError(`${need}. ${evidenceId} is not a message from the client.`, 'policy');
+      return;
+    }
+    throw new PolicyError(need, 'policy');
+  }
+
+  revertHouseholdCorrection(actor: Actor, correctionId: string, reason?: string) {
+    assertCan(actor, 'verify');
+    const c = this.state.householdCorrections.get(correctionId);
+    if (!c) throw new PolicyError('No such correction', 'not_found');
+    if (c.status !== 'in_force') throw new PolicyError('That correction is no longer in force', 'conflict');
+    return this.commit(actor, [{ type: 'household.correction_reverted', payload: { correctionId }, reason }]);
+  }
+
   revertCorrection(actor: Actor, correctionId: string, reason?: string) {
     assertCan(actor, 'verify');
     const c = this.state.corrections.get(correctionId);
@@ -754,6 +848,10 @@ export class Workpaper {
     if (!this.g.nodes.has(id) && !nodeKind(id)) throw new PolicyError(`Unknown node ${id}`, 'not_found');
   }
 }
+
+/** Household fields a preparer may correct (with the client's confirmation), and which are sensitive. */
+const HOUSEHOLD_FIELDS = ['ssn', 'name', 'dob'] as const;
+const HOUSEHOLD_SENSITIVE = new Set<string>(['ssn']);
 
 /** Parse a corrected read into its value type, rejecting values that can't be that type. */
 function coerceRead(type: string, v: unknown): unknown {

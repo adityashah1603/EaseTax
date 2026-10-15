@@ -80,7 +80,24 @@ describe('readiness', () => {
 });
 
 describe('client approval', () => {
+  it('opens only after partner sign-off (D-48)', () => {
+    expect(filingState(wp).approvalOpen.open).toBe(false);
+    expect(() => recordClientApproval(wp, A('cu-01'), { pins: { taxpayer: '41207' }, consent: true })).toThrow(/partner hasn't signed it off/);
+    wp.signoff(A('st-02'), 'return', 'reviewer');
+    expect(() => recordClientApproval(wp, A('cu-01'), { pins: { taxpayer: '41207' }, consent: true })).toThrow(/partner/);
+    wp.signoff(A('st-03'), 'return', 'partner');
+    expect(filingState(wp).approvalOpen.open).toBe(true);
+    recordClientApproval(wp, A('cu-01'), { pins: { taxpayer: '41207', spouse: '88310' }, consent: true });
+    expect(filingState(wp).clientApproval!.current).toBe(true);
+    // A later change reopens the partner sign-off; the client's approval goes stale with it.
+    wp.proposeAdjustment(A('st-03'), 'line:v3:SchB.1.2', 0, 'Duplicate of D28');
+    expect(filingState(wp).approvalOpen.open).toBe(false);
+    expect(filingState(wp).clientApproval!.current).toBe(false);
+  });
+
   it('is client-only and never echoes or stores the PINs', () => {
+    wp.signoff(A('st-02'), 'return', 'reviewer');
+    wp.signoff(A('st-03'), 'return', 'partner');
     expect(() => recordClientApproval(wp, A('st-02'), { pins: { taxpayer: '41207' }, consent: true })).toThrow(/cannot approve the return for the client/);
     const r = recordClientApproval(wp, A('cu-01'), { pins: { taxpayer: '41207', spouse: '88310' }, consent: true });
     expect(JSON.stringify(r.data)).not.toMatch(/41207|88310/);
@@ -124,6 +141,24 @@ describe('submit, freeze and after', () => {
     let st = filingState(wp);
     expect(st.submissions[0]).toMatchObject({ status: 'rejected', errors: [{ code: 'R0000-504-02' }] });
     expect(st.submissions[1]!.status).toBe('not_transmitted');
+
+    // D-49: the rejection's cause must be fixed before resubmitting. Accepting the issue isn't a fix.
+    expect(() => submit(wp, A('st-02'))).toThrow(/rejected \(R0000-504-02\) for Theo/);
+    // D-47: ask the client, record the answer, correct the record citing it.
+    expect(() => wp.correctHousehold(A('st-01'), 'theo', 'ssn', '666-74-3390', '', 'from SS card')).toThrow(/client's confirmation/);
+    const [asked] = wp.commit(A('st-01'), [{ type: 'question.asked', payload: { questionId: 'q-theo', to: 'client', nodeIds: ['household:theo'], text: "Please confirm Theo's SSN as on his card." } }]);
+    expect(asked).toBeDefined();
+    expect(() => wp.correctHousehold(A('st-01'), 'theo', 'ssn', '666-74-3390', 'question:q-theo', 'per SS card')).toThrow(/hasn't answered/);
+    wp.commit(A('cu-01'), [{ type: 'question.answered', payload: { questionId: 'q-theo', text: 'It ends 3390, sorry for the typo.' } }]);
+    expect(() => wp.correctHousehold(A('st-04'), 'theo', 'ssn', '666-74-3390', 'question:q-theo', 'per SS card')).toThrow(/clearance/);
+    wp.correctHousehold(A('st-01'), 'theo', 'ssn', '666-74-3390', 'question:q-theo', 'Client confirmed; agrees with SS card D71 and the 2024 return');
+    expect(wp.issues().some((i) => i.code === 'DEPENDENT_SSN_MISMATCH')).toBe(false);
+    // The correction reopened the sign-offs over lines that rest on Theo; re-sign and re-approve.
+    expect(() => submit(wp, A('st-02'))).toThrow(/Not ready to file/);
+    wp.signoff(A('st-02'), 'return', 'reviewer');
+    wp.signoff(A('st-03'), 'return', 'partner');
+    recordClientApproval(wp, A('cu-01'), { pins: { taxpayer: '41207', spouse: '88310' }, consent: true });
+
     const again = submit(wp, A('st-02'));
     expect(again.data.submissions.map((s) => s.id)).toEqual(['S3-federal', 'S4-california']);
     recordResult(wp, A('st-02'), 'S3-federal', { replay: true });
@@ -142,6 +177,18 @@ describe('submit, freeze and after', () => {
     const d = amendmentDiff(wp, r.data.amendmentId);
     expect(d.diffs).toEqual([expect.objectContaining({ key: 'SchB.1.2', filed: 1840, current: 0, change: 'changed' })]);
     expect(d.changesSinceFiling.length).toBe(1);
+  });
+
+  it('a read corrected after filing goes into the amendment, not the filed return', () => {
+    makeReady();
+    const snap = submit(wp, A('st-02')).data.snapshot;
+    wp.correctRead(A('st-01'), 'ev:ev-1045', '74-3829156', 'D62 prints 74-3829156');
+    expect(loadSnapshot(wp, snap.id).content.lines.find((l) => l.key === 'F2441.1b')!.label).toContain('74-3829516');
+    const r = openAmendment(wp, A('st-03'), { reason: 'Provider EIN misread' });
+    const d = amendmentDiff(wp, r.data.amendmentId);
+    expect(d.diffs).toEqual([expect.objectContaining({ key: 'F2441.1b', what: 'description', change: 'changed' })]);
+    expect(d.correctionChanges).toEqual([expect.objectContaining({ change: 'added' })]);
+    expect(d.changesSinceFiling.map((e) => e.type)).toContain('read.corrected');
   });
 
   it('builds the Letter 566 bundle from the frozen snapshot with the full trace', () => {
@@ -203,6 +250,10 @@ describe('filing API', () => {
     expect(r.json().ready).toBe(false);
     const s = await app.inject({ method: 'POST', url: '/api/filing/submit', headers: { 'x-actor': 'st-02' } });
     expect(s.statusCode).toBe(422);
+    const early = await app.inject({ method: 'POST', url: '/api/filing/client-approval', headers: { 'x-actor': 'cu-02' }, payload: { pins: { spouse: '88310' }, consent: true } });
+    expect(early.statusCode).toBe(422);
+    wp.signoff(wp.actor('st-02'), 'return', 'reviewer');
+    wp.signoff(wp.actor('st-03'), 'return', 'partner');
     const ap = await app.inject({ method: 'POST', url: '/api/filing/client-approval', headers: { 'x-actor': 'cu-02' }, payload: { pins: { spouse: '88310' }, consent: true } });
     expect(ap.statusCode).toBe(200);
     expect(ap.body).not.toContain('88310');

@@ -122,6 +122,20 @@ export interface ReadCorrectionDto {
   status: 'in_force' | 'reverted';
 }
 
+export interface HouseholdCorrectionDto {
+  id: string;
+  personId: string;
+  field: string;
+  originalValue: unknown;
+  correctedValue: unknown;
+  /** The client's confirmation relied on: question:<id> or msg:<id>. */
+  evidenceId: string;
+  reason: string;
+  by: string;
+  at: string;
+  status: 'in_force' | 'reverted';
+}
+
 export interface ReviewNoteDto {
   id: string;
   nodeIds: string[];
@@ -195,6 +209,8 @@ export interface NodeDetail {
   adjustments: AdjustmentDto[];
   /** Corrections to what the pipeline read (extracted values only). */
   corrections: ReadCorrectionDto[];
+  /** Corrections to client-entered household data (household nodes only). */
+  recordCorrections: HouseholdCorrectionDto[];
   issues: IssueDto[];
   notes: ReviewNoteDto[];
   questions: QuestionDto[];
