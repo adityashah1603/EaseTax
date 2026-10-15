@@ -10,6 +10,8 @@ import { fmtValue } from '../lib/format';
 import { useDrawer } from '../state/drawer';
 import { ROLE_LABEL, useSession } from '../state/session';
 import { useStream } from '../state/stream';
+import { viewNav } from '../routes/views';
+import { workflowHeaderWidgets, workflowNav } from '../routes/workflow';
 import { Kbd } from './ui';
 
 export function Shell({ children }: { children: ReactNode }) {
@@ -40,6 +42,7 @@ function TopBar() {
         )}
       </div>
       <div className="flex-1" />
+      {!isClient && workflowHeaderWidgets.map((W, i) => <W key={i} />)}
       {!isClient && <GlobalSearch />}
       {!isClient && <PresenceDots />}
       <RoleSwitcher />
@@ -66,6 +69,11 @@ function SideNav() {
       {item('/map', <LayoutGrid size={15} />, 'Return map')}
       {item('/documents', <FileStack size={15} />, 'Documents')}
       {item('/signoffs', <ShieldCheck size={15} />, 'Sign-offs')}
+      {[...viewNav, ...workflowNav]
+        .sort((a, b) => a.order - b.order)
+        .map((n) => (
+          <span key={n.to}>{item(n.to, n.icon, n.text)}</span>
+        ))}
       <div className="mt-auto space-y-1 px-2 pb-1 text-2xs text-faint">
         <div>
           <Kbd>/</Kbd> search

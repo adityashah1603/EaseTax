@@ -4,7 +4,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Actor, WhoAmI } from '@easetax/shared';
-import { nodeKind } from '@easetax/shared';
+import { estimateEffect, nodeKind, parseLineId } from '@easetax/shared';
 import type { Workpaper } from '../workpaper.ts';
 import { assertCan, PolicyError } from '../policy/policy.ts';
 
@@ -149,6 +149,23 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.get('/api/adjustments', async (req) => {
     const status = (req.query as { status?: string }).status;
     return [...wp.state.adjustments.values()].filter((a) => !status || a.status === status);
+  });
+  // What-ifs: the engine's precomputed alternatives, plus ad-hoc rate-based scenarios that never touch the return.
+  app.get('/api/what-ifs', async () => wp.b.packet.what_if);
+  app.post('/api/what-ifs/scenario', async (req) => {
+    const b = req.body as { changes: { nodeId: string; newValue: number }[] };
+    const v = wp.b.version(wp.version)!;
+    const rows = (b.changes ?? []).map((c) => {
+      const p = parseLineId(c.nodeId);
+      if (!p || p.version !== wp.version) throw new PolicyError(`Scenario lines must be in ${wp.version}`, 'invalid');
+      const current = wp.lineValue(p.key);
+      return { nodeId: c.nodeId, label: wp.b.line(p.version, p.key)?.label, current, newValue: c.newValue, effect: estimateEffect(p.key, current, c.newValue, v.tax_effect_rates, wp.version) };
+    });
+    const total = rows.reduce(
+      (t, r) => ({ federalTax: t.federalTax + r.effect.federalTax, californiaTax: t.californiaTax + r.effect.californiaTax, federalBalance: t.federalBalance + r.effect.federalBalance, californiaBalance: t.californiaBalance + r.effect.californiaBalance }),
+      { federalTax: 0, californiaTax: 0, federalBalance: 0, californiaBalance: 0 },
+    );
+    return { base: v.summary, rows, total, estimated: true };
   });
   app.post('/api/undo', async (req) => ok(wp.undo(who(req), req.body as { batchId?: string; eventId?: string })));
 

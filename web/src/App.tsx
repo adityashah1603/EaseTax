@@ -10,6 +10,8 @@ import { ReturnMap } from './pages/ReturnMap';
 import { Signoffs } from './pages/Signoffs';
 import { useSession } from './state/session';
 import { StreamProvider } from './state/stream';
+import { viewRoutes } from './routes/views';
+import { workflowRoutes } from './routes/workflow';
 
 export function App() {
   const { actorId, isClient, actor } = useSession();
@@ -28,6 +30,9 @@ export function App() {
             <Route path="/documents" element={<Documents />} />
             <Route path="/documents/:docId" element={<DocumentDetail />} />
             <Route path="/signoffs" element={<Signoffs />} />
+            {[...viewRoutes, ...workflowRoutes].map((r) => (
+              <Route key={r.path} path={r.path} element={r.element} />
+            ))}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         )}
