@@ -1,3 +1,74 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-paper text-ink font-sans text-base antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid #2c5ba0;
+    outline-offset: 1px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .num {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .btn {
+    @apply inline-flex items-center gap-1.5 rounded border border-rule bg-panel px-2.5 py-1 text-sm font-medium text-ink hover:border-graphite disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-1.5 rounded border border-ledger bg-ledger px-2.5 py-1 text-sm font-semibold text-white hover:bg-ledger-ink disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-sm text-graphite hover:bg-ruleSoft hover:text-ink;
+  }
+  .input {
+    @apply w-full rounded border border-rule bg-panel px-2 py-1 text-sm text-ink placeholder:text-faint focus:border-blue focus:outline-none;
+  }
+  .kbd {
+    @apply rounded border border-rule bg-paper px-1 text-2xs font-medium text-graphite;
+  }
+  .section-title {
+    @apply text-xs font-semibold text-graphite;
+  }
+  .drawer-in {
+    animation: drawer-in 160ms ease-out;
+  }
+  @keyframes drawer-in {
+    from {
+      transform: translateX(24px);
+      opacity: 0.6;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  .flash {
+    animation: flash 1.4s ease-out;
+  }
+  @keyframes flash {
+    0% {
+      box-shadow: 0 0 0 4px rgba(44, 91, 160, 0.45);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(44, 91, 160, 0);
+    }
+  }
+}
