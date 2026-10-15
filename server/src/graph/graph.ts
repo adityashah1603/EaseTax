@@ -122,6 +122,10 @@ export function buildGraph(b: Baseline): Graph {
     }
   }
 
+  // The 2024 return as filed: each line cites the value the pipeline read from D06.
+  const priorSources: Record<string, string> = b.packet.prior_years.return_2024?.line_sources ?? {};
+  for (const [key, ev] of Object.entries(priorSources)) g.addEdge(`py:/return_2024/lines/${key}`, resolveRef(ev, null), 'sourced_from');
+
   for (const t of b.timeline) {
     const id = `timeline:${t.id}`;
     g.nodes.add(id);

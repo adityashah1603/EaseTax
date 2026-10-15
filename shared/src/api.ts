@@ -241,7 +241,7 @@ export interface ReturnSummaryDto {
   packetHash: string;
   currentVersion: string;
   versions: { version: string; computedAt: string; trigger: string; federal: FedSummary; california: CaSummary }[];
-  priorYear: { agi: number | null; totalTax: number | null };
+  priorYear: { agi: number | null; totalTax: number | null; lines: Record<string, number | string | null> };
   status: {
     openIssues: number;
     blockingNotes: number;

@@ -102,7 +102,7 @@ export function TraceValue({
         e.stopPropagation();
         drawer.open(nodeId, { src });
       }}
-      className={clsx('num rounded px-0.5 text-right underline decoration-rule decoration-dotted underline-offset-4 hover:bg-blue-soft hover:decoration-blue', className)}
+      className={clsx('num rounded px-0.5 text-right underline decoration-faint decoration-dotted decoration-1 underline-offset-4 hover:bg-blue-soft hover:text-blue-ink hover:decoration-blue', className)}
       title="Trace this number"
     >
       {adjusted ? (

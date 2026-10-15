@@ -4,6 +4,7 @@
 import type { DocumentDetailDto, PageAnchor } from '@easetax/shared';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, type ReactElement } from 'react';
+import { useIssues } from '../../api/hooks';
 import { humanize } from '../../lib/format';
 
 export interface SourceRenditionProps {
@@ -42,6 +43,16 @@ interface Segment {
   evId?: string;
 }
 
+// A printed amount: optional minus or $, digits with thousands commas, optional decimals.
+const AMOUNT_RE = /-?\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\$?\d+\.\d+|-?\$?\d+/g;
+
+/** The value of a plain amount ("1,500.00", "-3,000", "$12.5"); null for anything else (EINs, dates, SSNs). */
+function parseAmount(s: string): number | null {
+  const t = s.trim();
+  if (!/^-?\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$/.test(t)) return null;
+  return Math.round(Number(t.replace(/[$,]/g, '')) * 100);
+}
+
 /** Where each field's text-as-read appears in the printed text (null when it doesn't). */
 export function matchAnchors(text: string, anchors: PageAnchor[]): { segments: Segment[]; found: Set<string> } {
   const taken: { start: number; end: number; evId: string }[] = [];
@@ -65,6 +76,20 @@ export function matchAnchors(text: string, anchors: PageAnchor[]): { segments: S
         break;
       }
       from = i + 1;
+    }
+    // Same amount printed in another format (e.g. read "228,409.00", printed "228,409.0"):
+    // match by numeric value so formatting never looks like a misread. Identifiers such as
+    // EINs and SSNs are not plain amounts and still need an exact match.
+    const amount = parseAmount(needle);
+    if (!found.has(a.evId) && amount !== null) {
+      for (const m of text.matchAll(AMOUNT_RE)) {
+        const start = m.index!;
+        const end = start + m[0].length;
+        if (parseAmount(m[0]) !== amount || taken.some((t) => start < t.end && end > t.start)) continue;
+        taken.push({ start, end, evId: a.evId });
+        found.add(a.evId);
+        break;
+      }
     }
   }
   taken.sort((x, y) => x.start - y.start);
@@ -140,8 +165,9 @@ function SimulatedPage({ doc, page, highlight, onSelect }: SourceRenditionProps)
             ),
           )}
         </div>
-        {/* the pipeline's anchor box for the selected field (page fractions, top-left origin) */}
-        {sel && (
+        {/* The pipeline's anchor box (page fractions, top-left origin). The packet's positions are synthetic,
+            so it is drawn only when the field's text can't be highlighted in the printed content. */}
+        {sel && !found.has(sel.evId) && (
           <div
             ref={boxRef}
             className="pointer-events-none absolute rounded-[2px] border-2 border-blue bg-blue/10"
@@ -159,19 +185,25 @@ function SimulatedPage({ doc, page, highlight, onSelect }: SourceRenditionProps)
         )}
         <div className="absolute inset-x-[6%] bottom-[2%] flex justify-between text-[9px] text-faint">
           <span>{doc.fileName}</span>
-          <span>Simulated from printed content · boxes from pipeline anchors</span>
+          <span>Simulated from printed content{sel && !found.has(sel.evId) ? ' · box from pipeline anchor' : ''}</span>
         </div>
       </div>
-      {sel && <ReadCheck anchor={sel} foundInText={found.has(sel.evId)} />}
+      {sel && <ReadCheck anchor={sel} />}
     </div>
   );
 }
 
-/** The selected field: what the pipeline read vs what is printed. */
-function ReadCheck({ anchor, foundInText }: { anchor: PageAnchor; foundInText: boolean }) {
+/**
+ * The selected field: what the pipeline read, and whether our read check disagrees with the page.
+ * The verdict comes from the server's engine-independent checks (normalized amounts, dates, IDs),
+ * not from matching text here, which would flag formatting differences as misreads.
+ */
+function ReadCheck({ anchor }: { anchor: PageAnchor }) {
+  const issues = useIssues();
+  const finding = issues.data?.find((i) => i.status === 'open' && i.source === 'check' && i.nodeIds.includes(`ev:${anchor.evId}`));
   const low = anchor.confidence < 0.8;
   return (
-    <div className={clsx('mt-2 rounded border px-2.5 py-1.5 text-xs', foundInText && !low ? 'border-rule bg-panel' : 'border-amber bg-amber-soft text-amber-ink')}>
+    <div className={clsx('mt-2 rounded border px-2.5 py-1.5 text-xs', finding || low ? 'border-amber bg-amber-soft text-amber-ink' : 'border-rule bg-panel')}>
       <div className="flex flex-wrap items-baseline gap-x-3">
         <span className="font-semibold">{anchor.label}</span>
         <span>
@@ -180,11 +212,7 @@ function ReadCheck({ anchor, foundInText }: { anchor: PageAnchor; foundInText: b
         <span className={clsx(low && 'font-semibold')}>confidence {Math.round(anchor.confidence * 100)}%</span>
         <span className="text-faint">{humanize(anchor.field)}</span>
       </div>
-      {!foundInText && (
-        <div className="mt-1 font-semibold">
-          “{anchor.textAsRead}” does not appear in the printed text of this page. Compare the read value with the page before relying on it.
-        </div>
-      )}
+      {finding && <div className="mt-1 font-semibold">{finding.title}</div>}
     </div>
   );
 }

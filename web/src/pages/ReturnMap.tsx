@@ -39,15 +39,21 @@ export function ReturnMap() {
   );
 }
 
-const ROWS: { label: string; fed?: keyof ReturnSummaryDto['versions'][number]['federal']; ca?: keyof ReturnSummaryDto['versions'][number]['california']; fedKey?: string; caKey?: string; effect?: 'tax' | 'balance' }[] = [
-  { label: 'Adjusted gross income', fed: 'agi', ca: 'total_agi', fedKey: 'F1040.11' },
-  { label: 'California AGI', ca: 'ca_agi' },
-  { label: 'Taxable income', fed: 'taxable_income', fedKey: 'F1040.15' },
-  { label: 'Total tax', fed: 'total_tax', ca: 'total_tax', fedKey: 'F1040.24', effect: 'tax' },
-  { label: 'Payments', fed: 'payments', ca: 'payments', fedKey: 'F1040.33' },
-  { label: 'Balance due (refund)', fed: 'balance_due', ca: 'balance_due', fedKey: 'F1040.37', effect: 'balance' },
-  { label: 'Penalty', fed: 'penalty', ca: 'penalty' },
+type Fed = ReturnSummaryDto['versions'][number]['federal'];
+type Ca = ReturnSummaryDto['versions'][number]['california'];
+
+// Each total is a return line in every engine version, and (where it existed) a line on the 2024 return.
+const ROWS: { label: string; fed?: keyof Fed; ca?: keyof Ca; fedKey?: string; caKey?: string; fedPrior?: string; caPrior?: string; effect?: 'tax' | 'balance' }[] = [
+  { label: 'Adjusted gross income', fed: 'agi', ca: 'total_agi', fedKey: 'F1040.11', caKey: 'F540NR.17', fedPrior: 'F1040.11', caPrior: 'CA540.17' },
+  { label: 'California AGI', ca: 'ca_agi', caKey: 'F540NR.32', caPrior: 'CA540.17' },
+  { label: 'Taxable income', fed: 'taxable_income', fedKey: 'F1040.15', fedPrior: 'F1040.15' },
+  { label: 'Total tax', fed: 'total_tax', ca: 'total_tax', fedKey: 'F1040.24', caKey: 'F540NR.64', fedPrior: 'F1040.24', caPrior: 'CA540.64', effect: 'tax' },
+  { label: 'Payments', fed: 'payments', ca: 'payments', fedKey: 'F1040.33', caKey: 'F540NR.78', fedPrior: 'F1040.33' },
+  { label: 'Balance due (refund)', fed: 'balance_due', ca: 'balance_due', fedKey: 'F1040.37', caKey: 'F540NR.97', effect: 'balance' },
+  { label: 'Penalty', fed: 'penalty', ca: 'penalty', fedKey: 'F1040.38', caKey: 'FTB5805.penalty' },
 ];
+
+const priorNode = (key: string) => `py:/return_2024/lines/${key}`;
 
 function SummaryTable({ s }: { s: ReturnSummaryDto }) {
   const cur = s.currentVersion;
@@ -82,12 +88,12 @@ function SummaryTable({ s }: { s: ReturnSummaryDto }) {
               <td className="px-3 py-1.5">{r.label}</td>
               {s.versions.map((v) => (
                 <td key={v.version} className={clsx(cell, v.version === cur && 'bg-paper font-semibold')}>
-                  {r.fedKey && v.version === cur ? <TraceValue nodeId={lineId(cur, r.fedKey)} value={v.federal[r.fed!]} /> : fmtNum(v.federal[r.fed!])}
+                  {r.fedKey ? <TraceValue nodeId={lineId(v.version, r.fedKey)} value={v.federal[r.fed!]} /> : fmtNum(v.federal[r.fed!])}
                 </td>
               ))}
               <td className={cell}>{r.effect === 'tax' ? est(ae.federalTax) : r.effect === 'balance' ? est(ae.federalTax + ae.federalBalance) : ''}</td>
               <td className={clsx(cell, 'text-graphite')}>
-                {r.fed === 'agi' && s.priorYear.agi !== null ? fmtNum(s.priorYear.agi) : r.fed === 'total_tax' && s.priorYear.totalTax !== null ? fmtNum(s.priorYear.totalTax) : ''}
+                <Prior s={s} k={r.fedPrior} />
               </td>
             </tr>
           ))}
@@ -101,11 +107,13 @@ function SummaryTable({ s }: { s: ReturnSummaryDto }) {
               <td className="px-3 py-1.5">{r.label}</td>
               {s.versions.map((v) => (
                 <td key={v.version} className={clsx(cell, v.version === cur && 'bg-paper font-semibold')}>
-                  {fmtNum(v.california[r.ca!])}
+                  {r.caKey ? <TraceValue nodeId={lineId(v.version, r.caKey)} value={v.california[r.ca!]} /> : fmtNum(v.california[r.ca!])}
                 </td>
               ))}
               <td className={cell}>{r.effect === 'tax' ? est(ae.californiaTax) : r.effect === 'balance' ? est(ae.californiaTax + ae.californiaBalance) : ''}</td>
-              <td />
+              <td className={clsx(cell, 'text-graphite')}>
+                <Prior s={s} k={r.caPrior} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -118,6 +126,12 @@ function SummaryTable({ s }: { s: ReturnSummaryDto }) {
       </div>
     </div>
   );
+}
+
+/** A 2024 figure, traceable to the value read from the 2024 return as filed (D06). */
+function Prior({ s, k }: { s: ReturnSummaryDto; k?: string }) {
+  const v = k ? s.priorYear.lines?.[k] : undefined;
+  return k && typeof v === 'number' ? <TraceValue nodeId={priorNode(k)} value={v} /> : null;
 }
 
 export function signoffState(signoffs: SignoffDto[]) {

@@ -218,6 +218,13 @@ export class Workpaper {
         const v = this.rawValue(id);
         s.label = kind === 'py' ? `Prior years ${id.slice(3)}` : `Agency record ${id.slice(7)}`;
         s.sublabel = kind === 'py' ? 'prior_years' : 'tax_agency_records';
+        const prior = /^py:\/return_2024\/lines\/(.+)$/.exec(id);
+        if (prior) {
+          const key = prior[1]!;
+          s.label = this.b.packet.prior_years.return_2024?.line_labels?.[key] ?? key;
+          s.sublabel = `2024 return as filed · ${key.replace('.', ' ')}`;
+          s.version = '2024';
+        }
         if (v === null || typeof v !== 'object') s.value = mask(v);
         break;
       }
@@ -525,7 +532,7 @@ export class Workpaper {
       packetHash: this.b.hash,
       currentVersion: this.version,
       versions: this.b.versions.map((v) => ({ version: v.version, computedAt: v.computed_at, trigger: v.trigger, federal: v.summary.federal, california: v.summary.california })),
-      priorYear: { agi: num(this.b.priorLines['F1040.11']), totalTax: num(this.b.priorLines['F1040.24']) },
+      priorYear: { agi: num(this.b.priorLines['F1040.11']), totalTax: num(this.b.priorLines['F1040.24']), lines: this.b.priorLines },
       status: {
         openIssues: issues.filter((i) => i.status === 'open').length,
         blockingNotes: [...this.state.notes.values()].filter((n) => n.blocking && n.status === 'open').length,

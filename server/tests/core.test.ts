@@ -65,6 +65,19 @@ describe('trace', () => {
     expect(fed).toContain('line:v3:F1040.1a');
   });
 
+  it('traces a 2024 return figure to the filed 2024 return (D06)', () => {
+    const t = wp.trace('py:/return_2024/lines/F1040.11', 'down', 3);
+    expect(t.node.label).toBe('Adjusted gross income');
+    expect(t.node.value).toBe(228409);
+    expect(JSON.stringify(t)).toContain('doc:D06#page');
+  });
+
+  it('every Return map total exists as a line in every engine version', () => {
+    for (const v of baseline.versions)
+      for (const k of ['F1040.11', 'F1040.15', 'F1040.24', 'F1040.33', 'F1040.37', 'F1040.38', 'F540NR.17', 'F540NR.32', 'F540NR.64', 'F540NR.78', 'F540NR.97', 'FTB5805.penalty'])
+        expect(baseline.line(v.version, k), `${v.version} ${k}`).toBeDefined();
+  });
+
   it('derives superseded disposition for the corrected Meridian 1099', () => {
     const d = wp.documents().find((x) => x.id === 'D30')!;
     expect(d.disposition?.status).toBe('superseded');
