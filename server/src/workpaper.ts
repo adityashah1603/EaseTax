@@ -24,7 +24,7 @@ import { buildGraph, type Graph } from './graph/graph.ts';
 import type { AppendInput, EventStore } from './events/store.ts';
 import { WorkState } from './state/state.ts';
 import { runChecks, type CheckContext } from './checks/index.ts';
-import { assertCan, canSignLevel, maskDeep, maskValue, PolicyError, RULES, SENSITIVE_VALUE_TYPES, actorsFrom } from './policy/policy.ts';
+import { assertCan, canSignLevel, maskDeep, maskText, maskValue, PolicyError, RULES, SENSITIVE_VALUE_TYPES, actorsFrom } from './policy/policy.ts';
 
 export type Listener = (events: WorkEvent[]) => void;
 
@@ -114,7 +114,8 @@ export class Workpaper {
   issues(): IssueDto[] {
     if (this.issuesCache) return this.issuesCache;
     const ctx: CheckContext = { b: this.b, g: this.g, state: this.state, version: this.version, lineValue: (k) => this.lineValue(k) };
-    const found = runChecks(ctx);
+    // Check text may quote document content; mask it like any other outbound text (D-10).
+    const found = runChecks(ctx).map((i) => ({ ...i, title: maskText(i.title), detail: i.detail ? maskText(i.detail) : i.detail }));
     const all: IssueDto[] = [];
     for (const i of found) {
       const st = this.state.issueStatus.get(i.id);

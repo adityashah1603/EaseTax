@@ -85,6 +85,12 @@ describe('masking', () => {
     expect(JSON.stringify(d)).not.toContain('666-41-2287');
   });
 
+  it('never sends a raw SSN in issue text', () => {
+    const ssns = baseline.packet.household.people.map((p) => p.ssn);
+    const text = JSON.stringify(wp.issues());
+    for (const ssn of [...ssns, '666-74-3390']) expect(text).not.toContain(ssn);
+  });
+
   it('blocks unmask for staff without clearance (st-04)', () => {
     expect(actor('st-04').clearance).toBe(false);
   });
