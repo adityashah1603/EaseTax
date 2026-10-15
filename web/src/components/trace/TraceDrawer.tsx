@@ -16,10 +16,10 @@ import { useDrawer } from '../../state/drawer';
 import { useSession } from '../../state/session';
 import { useStream } from '../../state/stream';
 import { useToast } from '../../state/toast';
-import { AdjustDialog, AskDialog, CorrectReadDialog, EvidenceDialog, NoteDialog, ReasonDialog, VerifyDialog } from '../actions';
+import { AdjustDialog, AskDialog, CorrectReadDialog, CorrectRecordDialog, EvidenceDialog, NoteDialog, ReasonDialog, VerifyDialog } from '../actions';
 import { ErrorBox, Kbd, Loading, Marks, Tick } from '../ui';
 import { flatten, FormulaTree, isSourceLeaf, type FlatRow } from './FormulaTree';
-import { AdjustmentCard, CorrectionCard, HistoryList, IssueCard, NoteCard, QuestionCard, Section, VerificationList, VersionsRow } from './sections';
+import { AdjustmentCard, CorrectionCard, HistoryList, IssueCard, NoteCard, QuestionCard, RecordCorrectionCard, Section, VerificationList, VersionsRow } from './sections';
 import { SourcePane } from './SourcePane';
 
 export function TraceDrawer() {
@@ -205,6 +205,11 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
                   <FileCheck2 size={14} /> Correct the read
                 </button>
               )}
+              {can('verify') && node.kind === 'household' && (
+                <button className="btn" onClick={() => drawer.setAct('record')} title="Correct the client's organizer entry, citing the client's confirmation (D-47)">
+                  <FileCheck2 size={14} /> Correct the record
+                </button>
+              )}
               {can('note') && (
                 <button className="btn" onClick={() => drawer.setAct('note')}>
                   <MessageSquarePlus size={14} /> Note <Kbd>n</Kbd>
@@ -310,6 +315,9 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
       {node && drawer.act === 'verify' && <VerifyDialog nodeIds={[nodeId]} label={label} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'adjust' && <AdjustDialog node={node} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'correct' && node.kind === 'ev' && <CorrectReadDialog node={node} onClose={() => drawer.setAct(null)} />}
+      {node && drawer.act === 'record' && node.kind === 'household' && (
+        <CorrectRecordDialog node={node} onClose={() => drawer.setAct(null)} onAsk={() => drawer.setAct('ask')} />
+      )}
       {node && drawer.act === 'note' && <NoteDialog nodeIds={[nodeId]} label={label} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'ask' && <AskDialog nodeIds={[nodeId]} label={label} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'evidence' && <EvidenceDialog nodeId={nodeId} onClose={() => drawer.setAct(null)} />}
@@ -344,6 +352,13 @@ function WorkRecord({ d }: { d: NodeDetail }) {
         <Section title="Judgments" count={judgments.length}>
           {judgments.map((j) => (
             <JudgmentCard key={j.id} j={j} compact />
+          ))}
+        </Section>
+      )}
+      {d.recordCorrections.length > 0 && (
+        <Section title="Record corrections" count={d.recordCorrections.length}>
+          {d.recordCorrections.map((c) => (
+            <RecordCorrectionCard key={c.id} c={c} />
           ))}
         </Section>
       )}
