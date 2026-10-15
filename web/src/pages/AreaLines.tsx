@@ -9,6 +9,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useAdjustments, useAreas, useLines, useStandards } from '../api/hooks';
 import { VerifyDialog } from '../components/actions';
 import { SignoffPanel } from '../components/SignoffPanel';
+import { AreaConsidered } from '../components/workflow/AreaConsidered';
 import { Empty, Kbd, Loading, Marks, TraceValue } from '../components/ui';
 import { fmtValue, variance } from '../lib/format';
 import { useListNav } from '../lib/useListNav';
@@ -124,6 +125,7 @@ export function AreaLines() {
                 {area.budgetHours !== undefined ? ` of ${area.budgetHours}` : ''} hours
               </p>
             )}
+            {area && <AreaConsidered area={area} />}
           </div>
           <div className="w-full max-w-[520px]">
             <SignoffPanel scope={`area:${areaId}`} compact />

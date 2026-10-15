@@ -3,11 +3,13 @@
 import type { CommandResult, NodeDetail, TraceNode } from '@easetax/shared';
 import { parseLineId } from '@easetax/shared';
 import clsx from 'clsx';
-import { ArrowLeft, Check, Eye, FileCheck2, HelpCircle, Link2, MessageSquarePlus, Paperclip, PenLine, X } from 'lucide-react';
+import { ArrowLeft, Check, Eye, FileCheck2, Gavel, HelpCircle, Link2, MessageSquarePlus, Paperclip, PenLine, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useNode, useSummary, useTrace } from '../../api/hooks';
+import { useJudgments } from '../../api/judgmentHooks';
+import { JudgmentCard, JudgmentDialog } from '../workflow/JudgmentDialog';
 import { useHotkeys } from '../../lib/hotkeys';
 import { fmtValue, isMasked, NODE_KIND_LABEL } from '../../lib/format';
 import { useDrawer } from '../../state/drawer';
@@ -42,6 +44,8 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
   const [sel, setSel] = useState<{ tree: 'down' | 'up'; key: string; id: string } | null>(null);
   const [unmasked, setUnmasked] = useState<unknown>(undefined);
   const [unmasking, setUnmasking] = useState(false);
+  // Local, not a URL ?act=: DrawerAction lives in state/drawer.ts, outside this change.
+  const [judging, setJudging] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
 
@@ -216,6 +220,11 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
                   <Paperclip size={14} /> Link evidence
                 </button>
               )}
+              {can('verify') && (
+                <button className="btn" onClick={() => setJudging(true)} title="Record a judgment call, election, due diligence or penalty decision linked to this item">
+                  <Gavel size={14} /> Record judgment
+                </button>
+              )}
               <span className="ml-auto self-center text-2xs text-faint">
                 <Kbd>j</Kbd> <Kbd>k</Kbd> move in the tree · <Kbd>Enter</Kbd> open
               </span>
@@ -304,6 +313,7 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
       {node && drawer.act === 'note' && <NoteDialog nodeIds={[nodeId]} label={label} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'ask' && <AskDialog nodeIds={[nodeId]} label={label} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'evidence' && <EvidenceDialog nodeId={nodeId} onClose={() => drawer.setAct(null)} />}
+      {node && judging && <JudgmentDialog draft={{ kind: 'judgment', nodeIds: [nodeId] }} currentNodeId={nodeId} onClose={() => setJudging(false)} />}
       {unmasking && (
         <ReasonDialog
           title="Reveal sensitive value"
@@ -324,11 +334,19 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
 
 function WorkRecord({ d }: { d: NodeDetail }) {
   const drawer = useDrawer();
+  const judgments = (useJudgments().data ?? []).filter((j) => j.nodeIds.includes(d.node.id));
   return (
     <>
       <Section title="Verifications" count={d.verifications.length}>
         <VerificationList items={d.verifications} />
       </Section>
+      {judgments.length > 0 && (
+        <Section title="Judgments" count={judgments.length}>
+          {judgments.map((j) => (
+            <JudgmentCard key={j.id} j={j} compact />
+          ))}
+        </Section>
+      )}
       {d.corrections.length > 0 && (
         <Section title="Read corrections" count={d.corrections.length}>
           {d.corrections.map((c) => (
