@@ -1,5 +1,5 @@
 // The record around a node: issues, adjustments, notes, questions, evidence, history.
-import type { AdjustmentDto, CommandResult, IssueDto, NodeDetail, QuestionDto, ReviewNoteDto, VerificationDto, WorkEvent } from '@easetax/shared';
+import type { AdjustmentDto, CommandResult, IssueDto, NodeDetail, QuestionDto, ReadCorrectionDto, ReviewNoteDto, VerificationDto, WorkEvent } from '@easetax/shared';
 import clsx from 'clsx';
 import { Lightbulb } from 'lucide-react';
 import { useState } from 'react';
@@ -61,13 +61,13 @@ export function IssueCard({ issue, currentNodeId }: { issue: IssueDto; currentNo
                   className="font-semibold text-ledger-ink underline underline-offset-2"
                   onClick={() =>
                     drawer.open(issue.suggestion!.nodeId, {
-                      act: 'adjust',
+                      act: issue.suggestion!.nodeId.startsWith('ev:') ? 'correct' : 'adjust',
                       src: issue.suggestion!.nodeId === currentNodeId ? drawer.src ?? undefined : undefined,
                       prefill: { value: String(issue.suggestion!.value), reason: `${issue.code}: ${issue.suggestion!.why}` },
                     })
                   }
                 >
-                  Apply suggestion
+                  {issue.suggestion.nodeId.startsWith('ev:') ? 'Correct the read' : 'Apply suggestion'}
                 </button>
               )}
             </div>
@@ -180,6 +180,59 @@ export function AdjustmentCard({ a }: { a: AdjustmentDto }) {
             run(() => api<CommandResult>(`/api/adjustments/${a.id}/${deciding}`, { method: 'POST', body: { note } }), {
               done: deciding === 'approve' ? 'Adjustment approved and in force' : deciding === 'reject' ? 'Adjustment rejected' : 'Adjustment reverted',
             })
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+/** A correction to what the pipeline read: original kept, who and why, revertible. */
+export function CorrectionCard({ c, showField }: { c: ReadCorrectionDto; showField?: boolean }) {
+  const { can, nameOf } = useSession();
+  const drawer = useDrawer();
+  const run = useCommand();
+  const [reverting, setReverting] = useState(false);
+  const inForce = c.status === 'in_force';
+  return (
+    <div className="mb-2 rounded border border-rule bg-panel px-3 py-2 text-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div className="num">
+          <span className="text-faint line-through">{fmtValue(c.originalValue)}</span>
+          <span className="mx-1.5 text-faint">to</span>
+          <span className="font-semibold text-blue-ink">{fmtValue(c.correctedValue)}</span>
+        </div>
+        <span className={clsx('rounded px-1.5 text-2xs font-semibold', inForce ? 'bg-blue-soft text-blue-ink' : 'bg-ruleSoft text-graphite')}>
+          {inForce ? 'In force' : 'Reverted'}
+        </span>
+      </div>
+      <div className="mt-1">{c.reason}</div>
+      <div className="mt-1 text-xs text-faint">
+        Read corrected by {nameOf(c.by)}, {fmtDateTime(c.at)}
+        {showField && (
+          <>
+            {' · '}
+            <button className="underline underline-offset-2" onClick={() => drawer.open(`ev:${c.evId}`)}>
+              {c.evId}
+            </button>
+          </>
+        )}
+      </div>
+      {inForce && can('verify') && (
+        <div className="mt-1.5">
+          <button className="btn-ghost text-xs" onClick={() => setReverting(true)}>
+            Revert to the pipeline's read
+          </button>
+        </div>
+      )}
+      {reverting && (
+        <ReasonDialog
+          title="Revert correction"
+          label="Why"
+          confirm="Revert"
+          onClose={() => setReverting(false)}
+          onSubmit={(reason) =>
+            run(() => api<CommandResult>(`/api/reads/corrections/${c.id}/revert`, { method: 'POST', body: { reason } }), { done: 'Correction reverted' })
           }
         />
       )}

@@ -17,7 +17,7 @@ export function registerStream(app: FastifyInstance, wp: Workpaper) {
     for (const c of clients) c.send(event, data);
   };
 
-  wp.onEvents((events) => broadcast('events', events.map((e) => ({ seq: e.seq, type: e.type, actor: e.actor, at: e.at, payload: e.payload }))));
+  wp.onEvents((events) => broadcast('events', events.map((e) => wp.publicEvent(e)).map((e) => ({ seq: e.seq, type: e.type, actor: e.actor, at: e.at, payload: e.payload }))));
 
   app.get('/api/stream', (req, reply) => {
     const q = req.query as { actor?: string; focus?: string };

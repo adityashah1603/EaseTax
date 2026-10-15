@@ -158,6 +158,67 @@ export function AdjustDialog({ node, onClose }: { node: NodeSummary; onClose: ()
   );
 }
 
+/**
+ * Correct the read (D-38): record what the page actually prints for one extracted value.
+ * The pipeline's read is kept as the original; the corrected value is what the return rests on.
+ */
+export function CorrectReadDialog({ node, onClose }: { node: NodeSummary; onClose: () => void }) {
+  const [pre] = useState(() => takePrefill());
+  const [value, setValue] = useState(pre?.value ?? '');
+  const [reason, setReason] = useState(pre?.reason ?? '');
+  const run = useCommand();
+  const s = useSubmit();
+  return (
+    <Modal title="Correct the read" onClose={onClose} width={500}>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const ok = await s.go(() =>
+            run(() => api<CommandResult>('/api/reads/corrections', { method: 'POST', body: { evId: node.id, value, reason } }), {
+              done: `Read corrected on ${node.sublabel ?? node.label}. The pipeline's read is kept as the original.`,
+            }),
+          );
+          if (ok) onClose();
+        }}
+      >
+        <div className="mb-3 rounded border border-rule bg-paper px-3 py-2 text-sm">
+          <div className="text-graphite">{node.label}</div>
+          <div className="text-xs text-faint">{node.sublabel}</div>
+          <div className="num mt-0.5">
+            Pipeline read <span className="font-semibold">{fmtValue(node.value)}</span>
+            {typeof node.confidence === 'number' && <span className="text-faint"> · confidence {Math.round(node.confidence * 100)}%</span>}
+            {node.adjusted && (
+              <>
+                {' '}
+                · corrected now to <span className="font-semibold text-blue-ink">{fmtValue(node.effectiveValue)}</span>
+              </>
+            )}
+          </div>
+        </div>
+        <Field label="What the page prints" hint="Type it as printed. Amounts as numbers, dates as YYYY-MM-DD, EINs as NN-NNNNNNN.">
+          <input className="input num" value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+        </Field>
+        <Field label="Why" hint="Required. Kept in the history with your name.">
+          <textarea className="input" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. D62 page 1 prints 74-3829156; the read swapped two digits" />
+        </Field>
+        <p className="mb-3 text-xs text-graphite">
+          Every line that uses this value shows the corrected one, and the read check compares it with the page again. Sign-offs over those lines reopen. Correcting a
+          read doesn't recompute amounts: if a corrected number changes a total, adjust that line too.
+        </p>
+        <ErrorBox error={s.error} />
+        <div className="mt-3 flex justify-end gap-2">
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn-primary" disabled={s.busy || !value.trim() || !reason.trim()}>
+            Record correction
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function parseInput(raw: string, like: unknown): unknown {
   if (typeof like === 'number' || /^[\s(−-]*[\d,.]+\)?\s*$/.test(raw)) {
     const neg = /^\s*[(−-]/.test(raw);

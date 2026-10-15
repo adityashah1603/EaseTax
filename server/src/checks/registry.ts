@@ -2,7 +2,7 @@
 // the graph and the current workpaper state, returning issues tied to exact nodes.
 // Issue ids must be stable across runs so resolutions (events) stay attached.
 
-import type { IssueDto } from '@easetax/shared';
+import type { ExtractedValue, IssueDto } from '@easetax/shared';
 import { diagId, resolveRef } from '@easetax/shared';
 import type { Baseline } from '../baseline/baseline.ts';
 import type { Graph } from '../graph/graph.ts';
@@ -15,6 +15,8 @@ export interface CheckContext {
   version: string;
   /** Effective value of a line in `version` after approved adjustments. */
   lineValue(key: string): unknown;
+  /** An extracted value as it stands after any human read correction (original object if none). */
+  effectiveEv(e: ExtractedValue): ExtractedValue;
 }
 
 export type CheckIssue = Omit<IssueDto, 'status' | 'source'> & { source?: IssueDto['source'] };

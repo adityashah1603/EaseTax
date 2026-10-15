@@ -7,7 +7,9 @@ import type {
   AreaDto,
   DocumentDetailDto,
   DocumentDto,
+  ExtractedValue,
   IssueDto,
+  ReadCorrectionDto,
   LineRow,
   NodeDetail,
   NodeSummary,
@@ -113,9 +115,24 @@ export class Workpaper {
 
   issues(): IssueDto[] {
     if (this.issuesCache) return this.issuesCache;
-    const ctx: CheckContext = { b: this.b, g: this.g, state: this.state, version: this.version, lineValue: (k) => this.lineValue(k) };
+    const ctx: CheckContext = {
+      b: this.b,
+      g: this.g,
+      state: this.state,
+      version: this.version,
+      lineValue: (k) => this.lineValue(k),
+      effectiveEv: (e) => {
+        const c = this.state.correctionFor(e.id);
+        return c ? { ...e, value: c.correctedValue as ExtractedValue['value'], text_as_read: String(c.correctedValue) } : e;
+      },
+    };
     // Check text may quote document content; mask it like any other outbound text (D-10).
-    const found = runChecks(ctx).map((i) => ({ ...i, title: maskText(i.title), detail: i.detail ? maskText(i.detail) : i.detail }));
+    const found = runChecks(ctx).map((i) => ({
+      ...i,
+      title: maskText(i.title),
+      detail: i.detail ? maskText(i.detail) : i.detail,
+      suggestion: i.suggestion && typeof i.suggestion.value === 'string' ? { ...i.suggestion, value: maskValue(i.suggestion.value), why: maskText(i.suggestion.why) } : i.suggestion,
+    }));
     const all: IssueDto[] = [];
     for (const i of found) {
       const st = this.state.issueStatus.get(i.id);
@@ -172,8 +189,9 @@ export class Workpaper {
         const p = parseLineId(id)!;
         const l = this.b.line(p.version, p.key);
         if (!l) break;
-        s.label = l.label;
+        s.label = this.lineLabel(p.version, l);
         s.sublabel = `${l.form} ${l.line}${l.jurisdiction === 'california' ? ' · CA' : ''}`;
+        if (p.version !== this.version) s.sublabel += ` · engine ${p.version}`;
         s.rule = l.rule;
         s.note = l.note;
         s.area = areaOfKey(l.key);
@@ -193,6 +211,9 @@ export class Workpaper {
         s.label = e.label;
         s.sublabel = `${e.document_id} p${e.page} · ${e.field}${d ? ' · ' + d.title : ''}`;
         s.value = SENSITIVE_VALUE_TYPES.has(e.value_type) ? mask(e.value) : e.value;
+        const corr = this.state.correctionFor(e.id);
+        s.effectiveValue = corr ? (SENSITIVE_VALUE_TYPES.has(e.value_type) ? mask(corr.correctedValue) : corr.correctedValue) : s.value;
+        s.adjusted = !!corr;
         s.confidence = e.confidence;
         s.verified = [...this.state.verifications.values()].some((v) => v.nodeId === id);
         s.openIssues = this.issuesFor(id).filter((i) => i.status === 'open').length;
@@ -305,8 +326,14 @@ export class Workpaper {
       if (seen.has(nid)) return { node, edge, children: [], repeated: true };
       seen.add(nid);
       const edges = dir === 'down' ? this.g.children(nid) : this.g.parents(nid);
-      // Upward from a line, only follow lines in the same version; other versions are noise.
-      const filtered = edges.filter((e) => e.type !== 'refers_to' || dir === 'down');
+      let filtered = edges.filter((e) => e.type !== 'refers_to' || dir === 'down');
+      // Up from a source (value, document, person, answer), every engine version cites it.
+      // Show where it lands in the current return; fall back to older versions (labelled with
+      // their version) only when the current one no longer uses it, e.g. a superseded 1099.
+      if (dir === 'up' && !nid.startsWith('line:')) {
+        const cur = filtered.filter((e) => !e.to.startsWith('line:') || e.to.startsWith(`line:${this.version}:`));
+        if (cur.some((e) => e.to.startsWith('line:'))) filtered = cur;
+      }
       if (d <= 0 && filtered.length) return { node, edge, children: [], truncated: true };
       return { node, edge, children: filtered.map((e) => walk(e.to, d - 1, e.type)) };
     };
@@ -325,6 +352,7 @@ export class Workpaper {
       raw: this.rawPayload(id),
       verifications,
       adjustments: [...this.state.adjustments.values()].filter((a) => a.nodeId === id),
+      corrections: this.correctionsFor(id),
       issues: this.issuesFor(id),
       notes: [...this.state.notes.values()].filter((n) => n.nodeIds.includes(id)),
       questions: [...this.state.questions.values()].filter((q) => q.nodeIds.includes(id)),
@@ -332,7 +360,7 @@ export class Workpaper {
       links: this.state.links
         .filter((l) => l.from === id || l.to === id)
         .map((l) => ({ id: l.id, other: this.summarize(l.from === id ? l.to : l.from), linkType: l.linkType, note: l.note })),
-      history: this.state.history.get(id) ?? [],
+      history: (this.state.history.get(id) ?? []).map((e) => this.publicEvent(e)),
     };
     const p = parseLineId(id);
     if (p) {
@@ -390,7 +418,7 @@ export class Workpaper {
         key: l.key,
         form: l.form,
         line: l.line,
-        label: l.label,
+        label: this.lineLabel(version, l),
         jurisdiction: l.jurisdiction,
         value: l.value,
         effectiveValue: adj ? adj.newValue : l.value,
@@ -434,7 +462,7 @@ export class Workpaper {
       evId: e.id,
       field: e.field,
       label: e.label,
-      value: SENSITIVE_VALUE_TYPES.has(e.value_type) ? maskValue(e.value) : e.value,
+      value: this.correctedValueOut(e) ?? (SENSITIVE_VALUE_TYPES.has(e.value_type) ? maskValue(e.value) : e.value),
       lines: this.g
         .parents(`ev:${e.id}`)
         .filter((p) => p.type === 'sourced_from' && p.to.startsWith(`line:${version}:`))
@@ -507,6 +535,7 @@ export class Workpaper {
             textAsRead: SENSITIVE_VALUE_TYPES.has(e.value_type) ? String(maskValue(e.text_as_read)) : e.text_as_read,
             anchor: e.position,
             confidence: e.confidence,
+            correctedValue: this.correctedValueOut(e),
           })),
       })),
       landings,
@@ -643,12 +672,118 @@ export class Workpaper {
     return this.commit(actor, [{ type: 'events.undone', payload: { eventIds: ids.map((e) => e.id) } }]);
   }
 
+  // ---------------------------------------------------------------- read corrections
+
+  /**
+   * A line's description with any corrected reads substituted, so a fixed EIN or name shows
+   * wherever the line is shown. Only the current version: earlier engine runs stay as computed.
+   */
+  lineLabel(version: string, l: { label: string; sources: string[] }): string {
+    if (version !== this.version) return l.label;
+    let label = l.label;
+    for (const src of l.sources) {
+      const c = this.state.correctionFor(src);
+      if (c && typeof c.originalValue !== 'object') label = label.split(String(c.originalValue)).join(String(c.correctedValue));
+    }
+    return label;
+  }
+
+  private correctedValueOut(e: ExtractedValue): unknown {
+    const c = this.state.correctionFor(e.id);
+    if (!c) return undefined;
+    return SENSITIVE_VALUE_TYPES.has(e.value_type) ? maskValue(c.correctedValue) : c.correctedValue;
+  }
+
+  /** Corrections on an extracted value, or on the extracted values a line rests on. */
+  private correctionsFor(id: string): ReadCorrectionDto[] {
+    let evIds: string[] = [];
+    if (id.startsWith('ev:')) evIds = [id.slice(3)];
+    else {
+      const p = parseLineId(id);
+      if (p) evIds = (this.b.line(p.version, p.key)?.sources ?? []).filter((s) => /^ev-/.test(s));
+    }
+    return [...this.state.corrections.values()].filter((c) => evIds.includes(c.evId)).map((c) => this.maskCorrection(c));
+  }
+
+  private maskCorrection(c: ReadCorrectionDto): ReadCorrectionDto {
+    return SENSITIVE_VALUE_TYPES.has(c.valueType) ? { ...c, originalValue: maskValue(c.originalValue), correctedValue: maskValue(c.correctedValue) } : c;
+  }
+
+  /** An event as it may leave the server: corrected SSNs and account numbers stay masked (D-10). */
+  publicEvent(e: WorkEvent): WorkEvent {
+    if (e.type !== 'read.corrected') return e;
+    const p = e.payload as WorkEvent<'read.corrected'>['payload'];
+    if (!SENSITIVE_VALUE_TYPES.has(p.valueType)) return e;
+    return { ...e, payload: { ...p, originalValue: maskValue(p.originalValue), correctedValue: maskValue(p.correctedValue) } } as WorkEvent;
+  }
+
+  correctRead(actor: Actor, evNodeId: string, rawValue: unknown, reason: string) {
+    assertCan(actor, 'verify');
+    if (!reason?.trim()) throw new PolicyError('Say why the read is wrong (e.g. what the page prints)', 'invalid');
+    const evId = evNodeId.replace(/^ev:/, '');
+    const e = this.b.evs.get(evId);
+    if (!e) throw new PolicyError(`No extracted value ${evId}`, 'not_found');
+    if (SENSITIVE_VALUE_TYPES.has(e.value_type) && !actor.clearance) {
+      throw new PolicyError('Correcting an SSN or account number needs sensitive-data clearance', 'forbidden', RULES.masking);
+    }
+    const value = coerceRead(e.value_type, rawValue);
+    const current = this.state.correctionFor(evId)?.correctedValue ?? e.value;
+    if (JSON.stringify(current) === JSON.stringify(value)) throw new PolicyError(`It already reads ${String(value)}`, 'conflict');
+    return this.commit(actor, [
+      {
+        type: 'read.corrected',
+        payload: { correctionId: randomUUID(), evId, originalValue: e.value, correctedValue: value, valueType: e.value_type },
+        reason,
+      },
+    ]);
+  }
+
+  revertCorrection(actor: Actor, correctionId: string, reason?: string) {
+    assertCan(actor, 'verify');
+    const c = this.state.corrections.get(correctionId);
+    if (!c) throw new PolicyError('No such correction', 'not_found');
+    if (c.status !== 'in_force') throw new PolicyError('That correction is no longer in force', 'conflict');
+    return this.commit(actor, [{ type: 'read.correction_reverted', payload: { correctionId }, reason }]);
+  }
+
   standards() {
     return (this.state.standards as typeof this.b.packet.firm.starter_standards | null) ?? this.b.packet.firm.starter_standards;
   }
 
   assertNode(id: string) {
     if (!this.g.nodes.has(id) && !nodeKind(id)) throw new PolicyError(`Unknown node ${id}`, 'not_found');
+  }
+}
+
+/** Parse a corrected read into its value type, rejecting values that can't be that type. */
+function coerceRead(type: string, v: unknown): unknown {
+  const s = String(v ?? '').trim();
+  const bad = (what: string) => new PolicyError(`Expected ${what}, got "${s}"`, 'invalid');
+  switch (type) {
+    case 'money':
+    case 'integer':
+    case 'quantity':
+    case 'percent': {
+      const n = Number(s.replace(/[$,]/g, ''));
+      if (!s || !Number.isFinite(n)) throw bad('a number');
+      if (type === 'integer' && !Number.isInteger(n)) throw bad('a whole number');
+      return n;
+    }
+    case 'date':
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(s))) throw bad('a date as YYYY-MM-DD');
+      return s;
+    case 'ein':
+      if (!/^\d{2}-\d{7}$/.test(s)) throw bad('an EIN as NN-NNNNNNN');
+      return s;
+    case 'ssn':
+      if (!/^\d{3}-\d{2}-\d{4}$/.test(s)) throw bad('an SSN as NNN-NN-NNNN');
+      return s;
+    case 'boolean':
+      if (!/^(true|false)$/i.test(s)) throw bad('true or false');
+      return /^true$/i.test(s);
+    default:
+      if (!s) throw bad('a value');
+      return s;
   }
 }
 

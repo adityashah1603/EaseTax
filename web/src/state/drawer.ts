@@ -3,7 +3,7 @@
 import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-export type DrawerAction = 'verify' | 'adjust' | 'note' | 'ask' | 'evidence';
+export type DrawerAction = 'verify' | 'adjust' | 'correct' | 'note' | 'ask' | 'evidence';
 
 export interface AdjustPrefill {
   value: string;

@@ -109,6 +109,19 @@ export interface ThreadEntry {
   text: string;
 }
 
+export interface ReadCorrectionDto {
+  id: string;
+  /** Extracted value id without prefix, e.g. "ev-1045". */
+  evId: string;
+  originalValue: unknown;
+  correctedValue: unknown;
+  valueType: string;
+  reason: string;
+  by: string;
+  at: string;
+  status: 'in_force' | 'reverted';
+}
+
 export interface ReviewNoteDto {
   id: string;
   nodeIds: string[];
@@ -180,6 +193,8 @@ export interface NodeDetail {
   raw: unknown;
   verifications: VerificationDto[];
   adjustments: AdjustmentDto[];
+  /** Corrections to what the pipeline read (extracted values only). */
+  corrections: ReadCorrectionDto[];
   issues: IssueDto[];
   notes: ReviewNoteDto[];
   questions: QuestionDto[];
@@ -198,6 +213,8 @@ export interface PageAnchor {
   textAsRead: string;
   anchor: Anchor;
   confidence: number;
+  /** A human correction of this read, if one is in force (masked like the value). */
+  correctedValue?: unknown;
 }
 
 export interface Landing {

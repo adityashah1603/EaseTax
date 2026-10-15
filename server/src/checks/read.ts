@@ -83,8 +83,10 @@ registerCheck({
   family: 'read',
   run(ctx) {
     const out: CheckIssue[] = [];
-    for (const e of ctx.b.packet.extracted_values) {
-      if (e.confidence < LOW_CONFIDENCE) continue; // handled by read.low_confidence
+    for (const raw of ctx.b.packet.extracted_values) {
+      if (raw.confidence < LOW_CONFIDENCE) continue; // handled by read.low_confidence
+      // Compare what the return now rests on: a human correction replaces the pipeline's read.
+      const e = ctx.effectiveEv(raw);
       const text = pageText(ctx, e.document_id, e.page);
       if (!text) continue;
       const r = comparePrinted(e, text);
@@ -109,6 +111,11 @@ registerCheck({
             (used.length ? `Used by ${used.join(', ')}; the return carries the misread value. ` : 'Not used by any line. ') +
             '(§8 E14: confident misreads only surface by comparing against printed content.)',
           nodeIds: [E(e.id), P(e.document_id, e.page), `doc:${e.document_id}`, ...used.map((k) => L(ctx, k))],
+          // One clear candidate on the page: offer it as the corrected read.
+          suggestion:
+            best && dist !== undefined && dist <= 2 && r.candidates!.filter((c) => editDistance(String(e.value), c) === dist).length === 1
+              ? { nodeId: E(e.id), value: best, why: `The page prints ${best}` }
+              : undefined,
         }),
       );
     }
@@ -124,6 +131,8 @@ registerCheck({
     const out: CheckIssue[] = [];
     for (const e of ctx.b.packet.extracted_values) {
       if (e.confidence >= LOW_CONFIDENCE || e.value === null) continue;
+      // A person has looked at the page and recorded the value: the confidence concern is settled.
+      if (ctx.state.correctionFor(e.id)) continue;
       const used = linesFor(ctx, e);
       if (!used.length) continue;
       const d = doc(ctx, e.document_id)!;

@@ -61,8 +61,13 @@ describe('check registry', () => {
     for (const i of checks) expect(`${i.title} ${i.detail ?? ''}`).not.toMatch(/\b\d{3}-\d{2}-\d{4}\b/);
   });
 
-  it('suggestions carry an estimated effect', () => {
+  it('suggestions are line adjustments with an estimated effect, or read corrections', () => {
     for (const i of checks.filter((x) => x.suggestion)) {
+      if (i.suggestion!.nodeId.startsWith('ev:')) {
+        // Correct the read (D-38): fixes what the pipeline read; no tax effect of its own.
+        expect(i.code).toMatch(/^READ_MISMATCH_/);
+        continue;
+      }
       expect(i.suggestion!.nodeId).toMatch(/^line:v3:/);
       expect(i.effect).toBeDefined();
     }

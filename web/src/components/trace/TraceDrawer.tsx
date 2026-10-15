@@ -3,7 +3,7 @@
 import type { CommandResult, NodeDetail, TraceNode } from '@easetax/shared';
 import { parseLineId } from '@easetax/shared';
 import clsx from 'clsx';
-import { ArrowLeft, Check, Eye, HelpCircle, Link2, MessageSquarePlus, Paperclip, PenLine, X } from 'lucide-react';
+import { ArrowLeft, Check, Eye, FileCheck2, HelpCircle, Link2, MessageSquarePlus, Paperclip, PenLine, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
@@ -14,10 +14,10 @@ import { useDrawer } from '../../state/drawer';
 import { useSession } from '../../state/session';
 import { useStream } from '../../state/stream';
 import { useToast } from '../../state/toast';
-import { AdjustDialog, AskDialog, EvidenceDialog, NoteDialog, ReasonDialog, VerifyDialog } from '../actions';
+import { AdjustDialog, AskDialog, CorrectReadDialog, EvidenceDialog, NoteDialog, ReasonDialog, VerifyDialog } from '../actions';
 import { ErrorBox, Kbd, Loading, Marks, Tick } from '../ui';
 import { flatten, FormulaTree, isSourceLeaf, type FlatRow } from './FormulaTree';
-import { AdjustmentCard, HistoryList, IssueCard, NoteCard, QuestionCard, Section, VerificationList, VersionsRow } from './sections';
+import { AdjustmentCard, CorrectionCard, HistoryList, IssueCard, NoteCard, QuestionCard, Section, VerificationList, VersionsRow } from './sections';
 import { SourcePane } from './SourcePane';
 
 export function TraceDrawer() {
@@ -166,7 +166,8 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
                 </div>
                 {node.adjusted && (
                   <div className="num text-xs text-graphite">
-                    engine <span className="line-through">{fmtValue(node.value)}</span> · workpaper value shown
+                    {node.kind === 'ev' ? 'pipeline read' : 'engine'} <span className="line-through">{fmtValue(node.value)}</span> ·{' '}
+                    {node.kind === 'ev' ? 'corrected read shown' : 'workpaper value shown'}
                   </div>
                 )}
                 {typeof node.confidence === 'number' && (
@@ -193,6 +194,11 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
               {can('adjust') && isCurrentLine && (
                 <button className="btn" onClick={() => drawer.setAct('adjust')}>
                   <PenLine size={14} /> Adjust <Kbd>a</Kbd>
+                </button>
+              )}
+              {can('verify') && node.kind === 'ev' && (
+                <button className="btn" onClick={() => drawer.setAct('correct')} title="Record what the page actually prints; the pipeline's read is kept">
+                  <FileCheck2 size={14} /> Correct the read
                 </button>
               )}
               {can('note') && (
@@ -294,6 +300,7 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
 
       {node && drawer.act === 'verify' && <VerifyDialog nodeIds={[nodeId]} label={label} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'adjust' && <AdjustDialog node={node} onClose={() => drawer.setAct(null)} />}
+      {node && drawer.act === 'correct' && node.kind === 'ev' && <CorrectReadDialog node={node} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'note' && <NoteDialog nodeIds={[nodeId]} label={label} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'ask' && <AskDialog nodeIds={[nodeId]} label={label} onClose={() => drawer.setAct(null)} />}
       {node && drawer.act === 'evidence' && <EvidenceDialog nodeId={nodeId} onClose={() => drawer.setAct(null)} />}
@@ -322,6 +329,13 @@ function WorkRecord({ d }: { d: NodeDetail }) {
       <Section title="Verifications" count={d.verifications.length}>
         <VerificationList items={d.verifications} />
       </Section>
+      {d.corrections.length > 0 && (
+        <Section title="Read corrections" count={d.corrections.length}>
+          {d.corrections.map((c) => (
+            <CorrectionCard key={c.id} c={c} showField={!d.node.id.startsWith('ev:')} />
+          ))}
+        </Section>
+      )}
       {d.adjustments.length > 0 && (
         <Section title="Adjustments" count={d.adjustments.length}>
           {d.adjustments.map((a) => (

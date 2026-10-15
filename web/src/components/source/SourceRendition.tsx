@@ -58,7 +58,8 @@ export function matchAnchors(text: string, anchors: PageAnchor[]): { segments: S
   const taken: { start: number; end: number; evId: string }[] = [];
   const found = new Set<string>();
   for (const a of anchors) {
-    const needle = (a.textAsRead ?? '').trim();
+    // After a correction, find what the page prints (the corrected value), not the misread.
+    const needle = String(a.correctedValue ?? a.textAsRead ?? '').trim();
     if (!needle) continue;
     let from = 0;
     while (from <= text.length) {
@@ -212,6 +213,11 @@ function ReadCheck({ anchor }: { anchor: PageAnchor }) {
         <span className={clsx(low && 'font-semibold')}>confidence {Math.round(anchor.confidence * 100)}%</span>
         <span className="text-faint">{humanize(anchor.field)}</span>
       </div>
+      {anchor.correctedValue !== undefined && (
+        <div className="mt-1 text-blue-ink">
+          Corrected to <span className="num font-semibold">{String(anchor.correctedValue)}</span>; the pipeline's read is kept as the original.
+        </div>
+      )}
       {finding && <div className="mt-1 font-semibold">{finding.title}</div>}
     </div>
   );

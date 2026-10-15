@@ -24,6 +24,9 @@ export interface EventPayloads {
   'adjustment.approved': { adjustmentId: string; note?: string };
   'adjustment.rejected': { adjustmentId: string; note?: string };
   'adjustment.reverted': { adjustmentId: string };
+  /** A human corrects what the pipeline read for one extracted value; the original is kept. */
+  'read.corrected': { correctionId: string; evId: string; originalValue: unknown; correctedValue: unknown; valueType: string };
+  'read.correction_reverted': { correctionId: string };
   'issue.resolved': { issueId: string; status: 'resolved' | 'accepted'; resolution: string };
   'issue.reopened': { issueId: string };
   'issue.raised': { issueId: string; nodeIds: string[]; title: string; detail?: string; severity: 'info' | 'warning' | 'error' };

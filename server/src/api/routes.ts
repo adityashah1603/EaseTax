@@ -177,6 +177,12 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     );
     return { base: v.summary, rows, total, estimated: true };
   });
+  // Correct what the pipeline read (D-38). The original stays; who, why and when are recorded.
+  app.post('/api/reads/corrections', async (req) => {
+    const b = req.body as { evId: string; value: unknown; reason: string };
+    return ok(wp.correctRead(who(req), b.evId, b.value, b.reason));
+  });
+  app.post('/api/reads/corrections/:id/revert', async (req) => ok(wp.revertCorrection(who(req), (req.params as any).id, (req.body as any)?.reason)));
   app.post('/api/undo', async (req) => ok(wp.undo(who(req), req.body as { batchId?: string; eventId?: string })));
 
   app.get('/api/issues', async () => wp.issues());
@@ -313,7 +319,7 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.get('/api/changes/since-last-seen', async (req) => {
     const a = who(req);
     const since = wp.state.lastSeen.get(a.id) ?? 0;
-    return { since, events: wp.state.events.filter((e) => e.seq > since && e.actor !== a.id && e.type !== 'seen.marked') };
+    return { since, events: wp.state.events.filter((e) => e.seq > since && e.actor !== a.id && e.type !== 'seen.marked').map((e) => wp.publicEvent(e)) };
   });
   app.post('/api/changes/mark-seen', async (req) => {
     const a = who(req);
@@ -324,7 +330,7 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   });
   app.get('/api/events', async (req) => {
     const after = Number((req.query as any).after ?? 0);
-    return wp.state.events.filter((e) => e.seq > after);
+    return wp.state.events.filter((e) => e.seq > after).map((e) => wp.publicEvent(e));
   });
 
   // ------------------------------------------------------------ sensitive data

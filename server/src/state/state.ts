@@ -4,6 +4,7 @@
 import type {
   AdjustmentDto,
   AttachmentDto,
+  ReadCorrectionDto,
   DispositionDto,
   IssueDto,
   JudgmentDto,
@@ -38,6 +39,9 @@ export class WorkState {
   adjustments = new Map<string, AdjustmentDto>();
   /** nodeId -> approved adjustment currently in force */
   activeAdjustment = new Map<string, string>();
+  corrections = new Map<string, ReadCorrectionDto>();
+  /** ev id (e.g. "ev-1045") -> correction currently in force */
+  activeCorrection = new Map<string, string>();
   issueStatus = new Map<string, { status: 'resolved' | 'accepted' | 'open'; resolution?: string } & Stamped>();
   humanIssues = new Map<string, IssueDto>();
   notes = new Map<string, ReviewNoteDto>();
@@ -138,6 +142,34 @@ export class WorkState {
           this.reopenSignoffs([adj.nodeId], e);
         }
         this.touch(adj.nodeId, e);
+        break;
+      }
+      case 'read.corrected': {
+        const prev = this.activeCorrection.get(p.evId);
+        if (prev) this.corrections.get(prev)!.status = 'reverted';
+        this.corrections.set(p.correctionId, {
+          id: p.correctionId,
+          evId: p.evId,
+          originalValue: p.originalValue,
+          correctedValue: p.correctedValue,
+          valueType: p.valueType,
+          reason: e.reason ?? '',
+          status: 'in_force',
+          ...stamp,
+        });
+        this.activeCorrection.set(p.evId, p.correctionId);
+        this.touchWithLines(`ev:${p.evId}`, e);
+        // What the return rests on changed: sign-offs over lines fed by this value reopen.
+        this.reopenSignoffs([`ev:${p.evId}`], e);
+        break;
+      }
+      case 'read.correction_reverted': {
+        const c = this.corrections.get(p.correctionId);
+        if (!c || c.status !== 'in_force') break;
+        c.status = 'reverted';
+        if (this.activeCorrection.get(c.evId) === c.id) this.activeCorrection.delete(c.evId);
+        this.touchWithLines(`ev:${c.evId}`, e);
+        this.reopenSignoffs([`ev:${c.evId}`], e);
         break;
       }
       case 'issue.raised':
@@ -291,10 +323,22 @@ export class WorkState {
     }
   }
 
+  /** Record the event on a source and on every line that cites it directly. */
+  private touchWithLines(nodeId: string, e: WorkEvent) {
+    this.touch(nodeId, e);
+    for (const p of this.graph.parents(nodeId)) if (p.type === 'sourced_from' && p.to.startsWith('line:')) this.touch(p.to, e);
+  }
+
   private touch(nodeId: string, e: WorkEvent) {
     const list = this.history.get(nodeId);
     if (list) list.push(e);
     else this.history.set(nodeId, [e]);
+  }
+
+  /** The correction in force for an extracted value (raw id, e.g. "ev-1045"). */
+  correctionFor(evId: string): ReadCorrectionDto | undefined {
+    const id = this.activeCorrection.get(evId);
+    return id ? this.corrections.get(id) : undefined;
   }
 
   effectiveAdjustment(nodeId: string): AdjustmentDto | undefined {
