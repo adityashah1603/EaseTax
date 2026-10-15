@@ -199,7 +199,6 @@ function AssignmentsPanel() {
         try {
           return await api(`/api/assignments/${encodeURIComponent(a.id)}/complete`, { method: 'POST' });
         } catch (e) {
-          if (e instanceof ApiFailure && e.status === 404) throw new Error('The API has no endpoint to complete an assignment yet (POST /api/assignments/:id/complete).');
           throw e;
         }
       },

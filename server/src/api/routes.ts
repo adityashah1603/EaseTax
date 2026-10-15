@@ -11,7 +11,8 @@ import { assertCan, PolicyError } from '../policy/policy.ts';
 const STATUS: Record<PolicyError['code'], number> = { forbidden: 403, policy: 422, invalid: 400, conflict: 409, not_found: 404 };
 
 export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
-  const who = (req: FastifyRequest): Actor => wp.actor((req.headers['x-actor'] as string) || 'st-01');
+  // No silent default: every request must say who is acting (D-09).
+  const who = (req: FastifyRequest): Actor => wp.actor(req.headers['x-actor'] as string | undefined);
   const ok = (events: { seq: number; id: string; batchId?: string }[], data?: unknown) => ({
     ok: true as const,
     seq: events.at(-1)?.seq ?? wp.state.seq,
@@ -266,6 +267,32 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     const b = req.body as { scope: string; assignee: string; due?: string; text: string };
     return ok(wp.commit(a, [{ type: 'assignment.created', payload: { assignmentId: randomUUID(), ...b } }]));
   });
+  app.get('/api/assignments', async () => [...wp.state.assignments.values()]);
+  app.post('/api/assignments/:id/complete', async (req) => {
+    const a = who(req);
+    const asg = wp.state.assignments.get((req.params as any).id);
+    if (!asg) throw new PolicyError('No such assignment', 'not_found');
+    if (asg.assignee !== a.id) assertCan(a, 'assign');
+    return ok(wp.commit(a, [{ type: 'assignment.completed', payload: { assignmentId: asg.id } }]));
+  });
+  app.get('/api/firm/dashboard', async (req) => {
+    const a = who(req);
+    if (a.kind === 'client') throw new PolicyError('Firm staff only', 'forbidden');
+    const f = wp.b.packet.firm;
+    const s = wp.summary();
+    return {
+      deadlines: f.deadlines,
+      assignmentAtStart: f.assignment_at_start,
+      budget: wp.areas().map((x) => ({ area: x.id, title: x.title, budgetHours: x.budgetHours ?? 0, loggedHours: x.loggedHours })),
+      status: s.status,
+      openAssignments: [...wp.state.assignments.values()].filter((x) => !x.done),
+    };
+  });
+  app.get('/api/notices', async (req) => {
+    const a = who(req);
+    if (a.kind === 'client') throw new PolicyError('Firm staff only', 'forbidden');
+    return wp.b.packet.tax_agency_records.notices ?? [];
+  });
   app.post('/api/time', async (req) => {
     const a = who(req);
     assertCan(a, 'log_time');
@@ -281,7 +308,10 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   });
   app.post('/api/changes/mark-seen', async (req) => {
     const a = who(req);
-    return ok(wp.commit(a, [{ type: 'seen.marked', payload: { seq: wp.state.seq } }]));
+    // Mark only what the client actually saw, so events that arrived meanwhile stay unread.
+    const seen = Number((req.body as { seq?: number } | undefined)?.seq);
+    const seq = Number.isFinite(seen) && seen > 0 ? Math.min(seen, wp.state.seq) : wp.state.seq;
+    return ok(wp.commit(a, [{ type: 'seen.marked', payload: { seq } }]));
   });
   app.get('/api/events', async (req) => {
     const after = Number((req.query as any).after ?? 0);

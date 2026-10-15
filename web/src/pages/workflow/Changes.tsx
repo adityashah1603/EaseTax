@@ -82,7 +82,7 @@ export function Changes() {
         <button
           className="btn-primary"
           disabled={!events.length || act.busy === 'seen'}
-          onClick={() => act.run('seen', () => api('/api/changes/mark-seen', { method: 'POST' }), 'Marked all as seen')}
+          onClick={() => act.run('seen', () => api('/api/changes/mark-seen', { method: 'POST', body: { seq: Math.max(...events.map((e) => e.seq)) } }), 'Marked all as seen')}
         >
           <CheckCheck size={14} /> Mark all seen
         </button>

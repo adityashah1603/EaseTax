@@ -126,12 +126,14 @@ describe('views', () => {
     const app = Fastify();
     registerRoutes(app, wp);
     registerViewRoutes(app, wp);
-    const list = await app.inject({ method: 'GET', url: '/api/views' });
+    // Requests must name the acting user; there is no default actor.
+    expect((await app.inject({ method: 'GET', url: '/api/views' })).statusCode).toBe(403);
+    const list = await app.inject({ method: 'GET', url: '/api/views', headers: { 'x-actor': 'st-01' } });
     expect(list.json()).toHaveLength(15);
     const v = await app.inject({ method: 'GET', url: '/api/views/carryovers', headers: { 'x-actor': 'st-02' } });
     expect(v.statusCode).toBe(200);
     expect(v.json().id).toBe('carryovers');
-    expect((await app.inject({ method: 'GET', url: '/api/views/nope' })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: '/api/views/nope', headers: { 'x-actor': 'st-01' } })).statusCode).toBe(404);
     expect((await app.inject({ method: 'GET', url: '/api/views/payments', headers: { 'x-actor': 'cu-01' } })).statusCode).toBe(403);
   });
 });

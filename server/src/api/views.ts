@@ -6,9 +6,12 @@ import { assertCan, PolicyError } from '../policy/policy.ts';
 import { buildView, listViews } from '../views/index.ts';
 
 export function registerViewRoutes(app: FastifyInstance, wp: Workpaper) {
-  const who = (req: FastifyRequest) => wp.actor((req.headers['x-actor'] as string) || 'st-01');
+  const who = (req: FastifyRequest) => wp.actor(req.headers['x-actor'] as string | undefined);
 
-  app.get('/api/views', async () => listViews());
+  app.get('/api/views', async (req) => {
+    if (who(req).kind === 'client') throw new PolicyError('Workpaper views are for firm staff', 'forbidden');
+    return listViews();
+  });
   app.get('/api/views/:id', async (req) => {
     const a = who(req);
     assertCan(a, 'read');

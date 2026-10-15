@@ -4,15 +4,21 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Workpaper } from '../workpaper.ts';
 import { assertCan, PolicyError } from '../policy/policy.ts';
 import { readiness } from '../filing/readiness.ts';
-import { filingState } from '../filing/state.ts';
+import { filedSnapshotId, filingState } from '../filing/state.ts';
 import { amendmentDiff, openAmendment, recordClientApproval, recordExtension, recordManualStep, recordResult, submit } from '../filing/commands.ts';
 import { buildNoticeCase, exportNoticeCase } from '../filing/notice.ts';
 import { rollForward } from '../filing/rollforward.ts';
 import { loadSnapshot } from '../filing/snapshot.ts';
 
 export function registerFilingRoutes(app: FastifyInstance, wp: Workpaper) {
-  const who = (req: FastifyRequest) => wp.actor((req.headers['x-actor'] as string) || 'st-01');
-  const ok = (events: { seq: number }[], data?: unknown) => ({ ok: true as const, seq: events.at(-1)?.seq ?? wp.state.seq, data });
+  const who = (req: FastifyRequest) => wp.actor(req.headers['x-actor'] as string | undefined);
+  const ok = (events: { seq: number; id: string; batchId?: string }[], data?: unknown) => ({
+    ok: true as const,
+    seq: events.at(-1)?.seq ?? wp.state.seq,
+    batchId: events.find((e) => e.batchId)?.batchId,
+    eventIds: events.map((e) => e.id),
+    data,
+  });
   const staff = (req: FastifyRequest) => {
     const a = who(req);
     if (a.kind === 'client') throw new PolicyError('Firm staff only', 'forbidden');
@@ -44,6 +50,13 @@ export function registerFilingRoutes(app: FastifyInstance, wp: Workpaper) {
   app.post('/api/filing/submissions/:id/result', async (req) => {
     const r = recordResult(wp, who(req), (req.params as { id: string }).id, (req.body ?? {}) as any);
     return ok(r.events, r.data);
+  });
+  // The client's copy: the filed return's lines and totals only (no workpaper state).
+  app.get('/api/filing/client-copy', async () => {
+    const id = filedSnapshotId(wp);
+    if (!id) throw new PolicyError('Nothing has been filed yet', 'not_found');
+    const s = loadSnapshot(wp, id);
+    return { snapshotId: id, contentHash: s.contentHash, taxYear: s.content.taxYear, lines: s.content.lines, summary: s.content.summary, filedAt: s.meta.at };
   });
   app.get('/api/filing/snapshots/:id', async (req) => {
     staff(req);
