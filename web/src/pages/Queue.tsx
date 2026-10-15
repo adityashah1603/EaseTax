@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import { useAreaIndex, useAreas, useDocuments, useIssues, useNotes, usePendingAdjustments, useQuestions, useSignoffs, useSummary } from '../api/hooks';
+import { useAreaIndex, useAreas, useDocuments, useIssues, useNotes, useAdjustments, useQuestions, useSignoffs, useSummary } from '../api/hooks';
 import { ReasonDialog, useCommand } from '../components/actions';
 import { Empty, Kbd, Loading, SeverityDot, SourceChip } from '../components/ui';
 import { fmtEffect, fmtValue, humanize } from '../lib/format';
@@ -52,7 +52,8 @@ export function Queue() {
   const docs = useDocuments();
   const areas = useAreas();
   const summary = useSummary();
-  const pending = usePendingAdjustments();
+  const proposed = useAdjustments('proposed');
+  const pending = proposed.data ?? [];
   const { areaOf } = useAreaIndex();
   const drawer = useDrawer();
   const navigate = useNavigate();
@@ -94,12 +95,12 @@ export function Queue() {
         });
     for (const a of pending)
       out.push({
-        key: `adj:${a.adjustmentId}`,
+        key: `adj:${a.id}`,
         kind: 'adjustment',
         rank: isPartner ? 0.5 : 4,
         severity: 'warning',
         title: `Adjustment awaiting partner: ${fmtValue(a.originalValue)} to ${fmtValue(a.newValue)}`,
-        sub: `${nameOf(a.by)}: ${a.reason ?? ''}`,
+        sub: `${nameOf(a.by)}: ${a.reason}`,
         right: fmtEffect(a.effect),
         area: areaOf([a.nodeId]),
         nodeId: a.nodeId,
@@ -144,7 +145,7 @@ export function Queue() {
           go: () => navigate(`/documents/${d.id}`),
         });
     return out.sort((a, b) => a.rank - b.rank);
-  }, [notes.data, signoffs.data, pending, issues.data, questions.data, docs.data, actorId, isPartner, areaOf, nameOf, navigate, areas.data]);
+  }, [notes.data, signoffs.data, proposed.data, issues.data, questions.data, docs.data, actorId, isPartner, areaOf, nameOf, navigate, areas.data]);
 
   const visible = items.filter((i) => (area === 'all' ? true : area === 'none' ? !i.area : i.area === area) && (kinds.size === 0 || kinds.has(i.kind)));
 
@@ -309,7 +310,6 @@ export function Queue() {
           onSubmit={async (reason) => {
             await run(() => api<CommandResult>('/api/issues/resolve', { method: 'POST', body: { issueIds: selectedIssues, status: bulk, resolution: reason } }), {
               done: `${selectedIssues.length} issue(s) ${bulk}`,
-              eventCount: selectedIssues.length,
             });
             setSelected(new Set());
           }}

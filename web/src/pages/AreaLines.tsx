@@ -6,7 +6,7 @@ import clsx from 'clsx';
 import { ArrowLeft } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useAreas, useLines, useStandards } from '../api/hooks';
+import { useAdjustments, useAreas, useLines, useStandards } from '../api/hooks';
 import { VerifyDialog } from '../components/actions';
 import { SignoffPanel } from '../components/SignoffPanel';
 import { Empty, Kbd, Loading, Marks, TraceValue } from '../components/ui';
@@ -24,6 +24,9 @@ export function AreaLines() {
   const lines = useLines(areaId);
   const std = useStandards();
   const vr = std.data?.variance_review;
+  // Adjustments over the firm limit wait here for a partner; mark their lines.
+  const proposed = useAdjustments('proposed');
+  const awaitingPartner = useMemo(() => new Set((proposed.data ?? []).map((a) => a.nodeId)), [proposed.data]);
   const drawer = useDrawer();
   const { can } = useSession();
   const [q, setQ] = useState('');
@@ -39,11 +42,11 @@ export function AreaLines() {
       if (needle && !`${l.key} ${l.label} ${l.rule}`.toLowerCase().includes(needle)) return false;
       if (exceptions) {
         const v = variance(l.effectiveValue, l.priorYear, vr?.flag_if_change_over_percent, vr?.and_over_amount);
-        return l.openIssues > 0 || l.adjusted || l.notes > 0 || !!v?.flagged;
+        return l.openIssues > 0 || l.adjusted || l.notes > 0 || !!v?.flagged || awaitingPartner.has(l.id);
       }
       return true;
     });
-  }, [lines.data, q, exceptions, vr]);
+  }, [lines.data, q, exceptions, vr, awaitingPartner]);
 
   // Interleave form headers so a 300-lot form still reads as sections.
   const rows = useMemo<Row[]>(() => {
@@ -131,7 +134,7 @@ export function AreaLines() {
           <label className="flex items-center gap-1.5 text-sm">
             <input type="checkbox" checked={exceptions} onChange={(e) => setExceptions(e.target.checked)} />
             Exceptions only
-            <span className="text-xs text-faint">(issues, adjusted, notes, variance over threshold)</span>
+            <span className="text-xs text-faint">(issues, adjusted or awaiting partner, notes, variance over threshold)</span>
           </label>
           <span className="flex-1" />
           {sel.length > 0 && can('verify') && (
@@ -210,7 +213,12 @@ export function AreaLines() {
                   <span className="truncate" title={l.label}>
                     {l.label}
                   </span>
-                  <span className="flex justify-end">
+                  <span className="flex items-center justify-end gap-1.5">
+                    {awaitingPartner.has(l.id) && (
+                      <span className="rounded bg-amber-soft px-1 text-2xs font-semibold text-amber-ink" title="An adjustment to this line waits for partner approval and is not in force yet">
+                        partner
+                      </span>
+                    )}
                     <Marks openIssues={l.openIssues} verified={l.verified} adjusted={l.adjusted} notes={l.notes} />
                   </span>
                   <span className="text-right">
