@@ -144,3 +144,29 @@ describe('corrections and filing snapshots', () => {
     expect((frozen.state.readCorrections ?? []).length).toBe(1);
   });
 });
+
+describe('a judgment closes the issues it answers (D-53)', () => {
+  it('resolves, cites the judgment, and undo reopens', async () => {
+    const Fastify = (await import('fastify')).default;
+    const { registerRoutes } = await import('../src/api/routes.ts');
+    const app = Fastify();
+    registerRoutes(app, wp);
+    const dd = 'eng:v3:DUE_DILIGENCE_REQUIRED';
+    expect(open(dd)).toBeDefined();
+    const bad = await app.inject({ method: 'POST', url: '/api/judgments', headers: { 'x-actor': 'st-01' }, payload: { kind: 'due_diligence', topic: 'x', decision: 'y', authority: 'IRC 6695(g)', issueIds: ['nope'] } });
+    expect(bad.statusCode).toBe(400);
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/judgments',
+      headers: { 'x-actor': 'st-01' },
+      payload: { kind: 'due_diligence', topic: 'Form 8867', decision: 'Due diligence completed; documents on file', authority: 'IRC 6695(g); Treas. Reg. 1.6695-2', nodeIds: ['line:v3:F8867.status'], issueIds: [dd] },
+    });
+    expect(r.statusCode).toBe(200);
+    const closed = wp.issues().find((i) => i.id === dd)!;
+    expect(closed.status).toBe('resolved');
+    expect(closed.resolution).toMatch(/Decided by judgment: Due diligence completed/);
+    expect(closed.resolvedByJudgment).toBeDefined();
+    wp.undo(A('st-01'), { eventId: r.json().eventIds[0] });
+    expect(open(dd)).toBeDefined();
+  });
+});

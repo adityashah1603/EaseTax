@@ -140,7 +140,7 @@ export class Workpaper {
     for (const i of found) {
       const st = this.state.issueStatus.get(i.id);
       const area = i.area ?? this.areaOfNodes(i.nodeIds);
-      all.push({ ...i, source: i.source ?? 'check', status: st?.status ?? 'open', resolution: st?.resolution, area });
+      all.push({ ...i, source: i.source ?? 'check', status: st?.status ?? 'open', resolution: st?.resolution, resolvedByJudgment: st?.judgmentId, area });
     }
     for (const h of this.state.humanIssues.values()) {
       const st = this.state.issueStatus.get(h.id);

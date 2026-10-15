@@ -52,6 +52,8 @@ export interface EventPayloads {
     authority: string;
     nodeIds: string[];
     effect?: EstimatedEffect;
+    /** Issues this judgment answers; recording it resolves them (D-53). */
+    issueIds?: string[];
   };
   'disposition.set': { documentId: string; status: DispositionStatus; note?: string };
   'area.considered': { areaId: string; note?: string };

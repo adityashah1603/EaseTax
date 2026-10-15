@@ -19,6 +19,8 @@ export interface JudgmentDraft {
   decision?: string;
   alternatives?: string[];
   nodeIds?: string[];
+  /** Issues this decision answers; recording it closes them, citing the judgment (D-53). */
+  issues?: { id: string; title: string }[];
   /** Placeholder for the authority field; never prefilled as a value (the preparer states it). */
   authorityHint?: string;
   /** Shown above the form, e.g. the engine's numbers for each option. */
@@ -85,7 +87,7 @@ export function JudgmentDialog({ draft, currentNodeId, onClose }: { draft: Judgm
               () =>
                 api<CommandResult>('/api/judgments', {
                   method: 'POST',
-                  body: { kind, topic: topic.trim(), decision: decision.trim(), alternatives: alts.map((a) => a.trim()).filter(Boolean), authority, nodeIds },
+                  body: { kind, topic: topic.trim(), decision: decision.trim(), alternatives: alts.map((a) => a.trim()).filter(Boolean), authority, nodeIds, issueIds: (draft.issues ?? []).map((i) => i.id) },
                 }),
               { done: `${KIND_LABEL[kind]} recorded: ${topic.trim()}` },
             );
@@ -98,6 +100,16 @@ export function JudgmentDialog({ draft, currentNodeId, onClose }: { draft: Judgm
         }}
       >
         {draft.context && <div className="mb-3">{draft.context}</div>}
+        {(draft.issues ?? []).length > 0 && (
+          <div className="mb-3 rounded border border-ledger/40 bg-ledger-soft px-3 py-2 text-xs text-ledger-ink">
+            Recording this decision closes {draft.issues!.length === 1 ? 'this issue' : `these ${draft.issues!.length} issues`}, citing the judgment (undo reopens them):
+            <ul className="mt-1 list-disc pl-4">
+              {draft.issues!.map((i) => (
+                <li key={i.id}>{i.title}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         <Field label="Kind">
           <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Kind">
             {JUDGMENT_KINDS.map((k) => (

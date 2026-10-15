@@ -46,7 +46,7 @@ export class WorkState {
   householdCorrections = new Map<string, HouseholdCorrectionDto>();
   /** "<personId>.<field>" -> household correction in force */
   activeHousehold = new Map<string, string>();
-  issueStatus = new Map<string, { status: 'resolved' | 'accepted' | 'open'; resolution?: string } & Stamped>();
+  issueStatus = new Map<string, { status: 'resolved' | 'accepted' | 'open'; resolution?: string; judgmentId?: string } & Stamped>();
   humanIssues = new Map<string, IssueDto>();
   notes = new Map<string, ReviewNoteDto>();
   questions = new Map<string, QuestionDto>();
@@ -266,8 +266,13 @@ export class WorkState {
         this.touch(p.to, e);
         break;
       case 'judgment.recorded':
-        this.judgments.set(p.judgmentId, { id: p.judgmentId, kind: p.kind, topic: p.topic, decision: p.decision, alternatives: p.alternatives, authority: p.authority, nodeIds: p.nodeIds, effect: p.effect, ...stamp });
+        this.judgments.set(p.judgmentId, { id: p.judgmentId, kind: p.kind, topic: p.topic, decision: p.decision, alternatives: p.alternatives, authority: p.authority, nodeIds: p.nodeIds, effect: p.effect, issueIds: p.issueIds, ...stamp });
         for (const n of p.nodeIds) this.touch(n, e);
+        // D-53: the judgment answers these issues, so it closes them, citing itself. Undoing the
+        // judgment replays without this event, which reopens them.
+        for (const issueId of p.issueIds ?? []) {
+          this.issueStatus.set(issueId, { status: 'resolved', resolution: `Decided by judgment: ${p.decision} (authority: ${p.authority})`, judgmentId: p.judgmentId, ...stamp });
+        }
         break;
       case 'disposition.set':
         this.dispositions.set(p.documentId, { documentId: p.documentId, status: p.status, note: p.note ?? e.reason, derived: false, ...stamp });

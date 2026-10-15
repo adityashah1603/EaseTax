@@ -69,6 +69,8 @@ export interface IssueDto {
   resolution?: string;
   /** Estimated tax effect if the check knows the corrected value. */
   effect?: EstimatedEffect;
+  /** Set when a recorded judgment closed this issue (D-53). */
+  resolvedByJudgment?: string;
   /** Suggested corrected value for a line, if the check computed one. */
   suggestion?: { nodeId: string; value: unknown; why: string };
   area?: string;
@@ -176,6 +178,8 @@ export interface JudgmentDto {
   authority: string;
   nodeIds: string[];
   effect?: EstimatedEffect;
+  /** Issues this judgment answered and closed (D-53). */
+  issueIds?: string[];
   by: string;
   at: string;
 }

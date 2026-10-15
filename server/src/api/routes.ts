@@ -215,9 +215,19 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.post('/api/judgments', async (req) => {
     const a = who(req);
     assertCan(a, 'judgment');
-    const b = req.body as { kind: any; topic: string; decision: string; alternatives?: string[]; authority: string; nodeIds?: string[] };
+    const b = req.body as { kind: any; topic: string; decision: string; alternatives?: string[]; authority: string; nodeIds?: string[]; issueIds?: string[] };
     if (!b.authority?.trim()) throw new PolicyError('Every judgment call records the authority relied on.', 'policy', 'Every judgment call records the authority relied on.');
-    return ok(wp.commit(a, [{ type: 'judgment.recorded', payload: { judgmentId: randomUUID(), kind: b.kind, topic: b.topic, decision: b.decision, alternatives: b.alternatives ?? [], authority: b.authority, nodeIds: b.nodeIds ?? [] } }]));
+    const known = new Set(wp.issues().map((i) => i.id));
+    const unknown = (b.issueIds ?? []).filter((id) => !known.has(id));
+    if (unknown.length) throw new PolicyError(`No such issue: ${unknown.join(', ')}`, 'invalid');
+    return ok(
+      wp.commit(a, [
+        {
+          type: 'judgment.recorded',
+          payload: { judgmentId: randomUUID(), kind: b.kind, topic: b.topic, decision: b.decision, alternatives: b.alternatives ?? [], authority: b.authority, nodeIds: b.nodeIds ?? [], issueIds: b.issueIds ?? [] },
+        },
+      ]),
+    );
   });
   app.get('/api/judgments', async () => [...wp.state.judgments.values()]);
 

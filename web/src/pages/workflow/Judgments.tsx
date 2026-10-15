@@ -62,6 +62,7 @@ export function Judgments() {
     topic: c.topic,
     alternatives: c.alternatives,
     nodeIds: c.nodeIds,
+    issues: c.sources.filter((s) => s.issue && s.issue.status === 'open').map((s) => ({ id: s.issue!.id, title: s.issue!.title })),
     authorityHint: c.authorityHint,
     context: (
       <div className="rounded border border-rule bg-paper px-3 py-2 text-xs text-graphite">
