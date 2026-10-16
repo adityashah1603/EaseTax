@@ -1,0 +1,17 @@
+# Render Blueprint: one free web service that serves the SPA and the API (D-16, D-64).
+# The free plan has no persistent disk: the SQLite event log resets when the
+# service sleeps or redeploys, and the app starts again from the packet.
+services:
+  - type: web
+    name: easetax
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 24.13.0
+      - key: DB_PATH
+        value: /tmp/easetax/easetax.db
