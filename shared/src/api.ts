@@ -305,6 +305,10 @@ export interface AreaDto {
   adjustedLines: number;
   signoffs: SignoffDto[];
   considered: boolean;
+  /** Who marked the area considered, when, and their note (latest mark). */
+  consideredBy?: string;
+  consideredAt?: string;
+  consideredNote?: string;
   budgetHours?: number;
   loggedHours: number;
 }
@@ -321,10 +325,30 @@ export interface LineRow {
   priorYear?: unknown;
   rule: string;
   area: string;
+  /** Revision for stale-write checks on bulk actions (D-57). */
+  revision: number;
   openIssues: number;
   verified: boolean;
   adjusted: boolean;
   notes: number;
+}
+
+/** A decision the return still needs someone to record (GET /api/judgments/pending, D-61). */
+export interface PendingJudgmentDto {
+  key: string;
+  kind: JudgmentKind;
+  topic: string;
+  why: string;
+  /** Open issues this call answers (sent back as issueIds when recording, D-53). */
+  issueIds: string[];
+  /** Engine what_if alternative ids behind this call. */
+  whatIfIds: string[];
+  /** Prefilled alternatives, each with the engine's exact numbers. */
+  alternatives: string[];
+  nodeIds: string[];
+  authorityHint: string;
+  /** Judgments already recorded that settle this call. */
+  decidedIds: string[];
 }
 
 export interface WhoAmI {

@@ -34,21 +34,46 @@ export function StreamProvider({ actorId, children }: { actorId: string; childre
   const focus = params.get('node') ?? loc.pathname;
 
   useEffect(() => {
-    const es = new EventSource(`/api/stream?actor=${encodeURIComponent(actorId)}&focus=${encodeURIComponent(focus)}`);
-    es.addEventListener('hello', () => setState((s) => ({ ...s, connected: true })));
-    es.addEventListener('events', (m) => {
-      const evs = JSON.parse((m as MessageEvent).data) as LiveEvent[];
-      setState((s) => ({ ...s, recent: [...evs.filter((e) => e.type !== 'seen.marked'), ...s.recent].slice(0, 30) }));
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(
-        () => qc.invalidateQueries({ predicate: (q) => !['me', 'standards'].includes(q.queryKey[0] as string) }),
-        120,
-      );
-    });
-    es.addEventListener('presence', (m) => setState((s) => ({ ...s, presence: JSON.parse((m as MessageEvent).data) as Presence[] })));
-    es.onerror = () => setState((s) => ({ ...s, connected: false }));
-    es.onopen = () => setState((s) => ({ ...s, connected: true }));
-    return () => es.close();
+    const connect = () => {
+      const source = new EventSource(`/api/stream?actor=${encodeURIComponent(actorId)}&focus=${encodeURIComponent(focus)}`);
+      source.addEventListener('hello', () => setState((s) => ({ ...s, connected: true })));
+      source.addEventListener('events', (m) => {
+        const evs = JSON.parse((m as MessageEvent).data) as LiveEvent[];
+        setState((s) => ({ ...s, recent: [...evs.filter((e) => e.type !== 'seen.marked'), ...s.recent].slice(0, 30) }));
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(
+          () => qc.invalidateQueries({ predicate: (q) => !['me', 'standards'].includes(q.queryKey[0] as string) }),
+          120,
+        );
+      });
+      source.addEventListener('presence', (m) => setState((s) => ({ ...s, presence: JSON.parse((m as MessageEvent).data) as Presence[] })));
+      source.onerror = () => setState((s) => ({ ...s, connected: false }));
+      source.onopen = () => setState((s) => ({ ...s, connected: true }));
+      return source;
+    };
+
+    // W6 (D-63): a page the browser keeps for back/forward navigation keeps its EventSource
+    // open. A few navigations later those idle streams fill the browser's 6-connections-per-host
+    // limit (HTTP/1.1) and every request queues behind them. Close the stream on pagehide and
+    // reconnect (and refresh, since events were missed) when the page is restored.
+    let es: EventSource | null = connect();
+    const close = () => {
+      es?.close();
+      es = null;
+      setState((s) => ({ ...s, connected: false }));
+    };
+    const onShow = (e: PageTransitionEvent) => {
+      if (es) return;
+      es = connect();
+      if (e.persisted) qc.invalidateQueries();
+    };
+    window.addEventListener('pagehide', close);
+    window.addEventListener('pageshow', onShow);
+    return () => {
+      window.removeEventListener('pagehide', close);
+      window.removeEventListener('pageshow', onShow);
+      close();
+    };
     // Reconnect only when the actor changes; focus is pushed separately below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actorId, qc]);

@@ -123,6 +123,17 @@ function rejectionBlockers(wp: Workpaper): ReadinessDto['blockers'] {
   for (const j of ['federal', 'california'] as const) {
     const last = st.submissions.filter((s) => s.jurisdiction === j).at(-1);
     if (!last || last.status !== 'rejected') continue;
+    // D-62: a rejection the system can't map to a cause clears only with a recorded fix,
+    // confirmed by someone else.
+    const named = (msg: string) => wp.b.packet.household.people.some((p) => msg.includes(p.name));
+    const unmapped = (last.errors ?? []).filter((err) => !named(String(err.message)));
+    if (unmapped.length) {
+      const fix = [...wp.state.filingSteps].reverse().find((s) => s.step === 'rejection_fix' && (s.data as any)?.submissionId === last.id);
+      const confirmed = fix && wp.state.filingSteps.some((s) => s.step === 'rejection_fix_confirmed' && (s.data as any)?.fixSeq === fix.seq);
+      const codes = unmapped.map((e) => e.code).join(', ');
+      if (!fix) out.push({ code: 'EFILE_REJECTION_FIX_MISSING', text: `The ${j} e-file was rejected (${codes}). Record what fixed it before resubmitting.`, nodeIds: [] });
+      else if (!confirmed) out.push({ code: 'EFILE_REJECTION_FIX_UNCONFIRMED', text: `The fix for the ${j} rejection (${codes}) needs a reviewer or partner to confirm it.`, nodeIds: ((fix.data as any)?.refs ?? []).filter((r: string) => r.includes(':')) });
+    }
     for (const err of last.errors ?? []) {
       for (const p of wp.b.packet.household.people) {
         if (!String(err.message).includes(p.name)) continue;

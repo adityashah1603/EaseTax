@@ -1,11 +1,11 @@
 // Judgment calls, elections, due diligence and penalty decisions (FR "record judgment calls"),
 // the calls the engine and our checks say still need one, and which areas were considered.
 // Like hooks.ts, every query is invalidated by the SSE stream, so these stay live.
-import type { IssueDto, JudgmentDto, JudgmentKind, WorkEvent } from '@easetax/shared';
+import type { IssueDto, JudgmentDto, JudgmentKind, PendingJudgmentDto, WorkEvent } from '@easetax/shared';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { api } from './client';
-import { useEvents, useIssues, useSummary } from './hooks';
+import { useEvents, useIssues } from './hooks';
 
 export const JUDGMENT_KINDS: JudgmentKind[] = ['judgment', 'election', 'due_diligence', 'penalty'];
 export const KIND_LABEL: Record<JudgmentKind, string> = {
@@ -75,89 +75,37 @@ export function optionText(a: WhatIfAlternative) {
 }
 
 /**
- * The calls waiting for a decision, derived (no server endpoint): open issues of the
- * judgment check family (ids "chk:judgment.*"), the engine's what_if alternatives grouped by
- * the choice they flip, and the engine's DUE_DILIGENCE_REQUIRED diagnostic.
+ * The calls waiting for a decision, from GET /api/judgments/pending (D-61). The server works
+ * them out; here they're joined with the issues, what_ifs and judgments the page shows.
  */
 export function useJudgmentCalls() {
+  const pending = useQuery({ queryKey: ['judgments', 'pending'], queryFn: () => api<PendingJudgmentDto[]>('/api/judgments/pending') });
   const issues = useIssues();
   const whatIfs = useWhatIfAlternatives();
   const judgments = useJudgments();
-  const summary = useSummary();
-  const calls = useMemo(() => {
-    const v = summary.data?.currentVersion ?? 'v3';
-    const all = judgments.data ?? [];
-    const open = (issues.data ?? []).filter((i) => i.status === 'open');
-    const out: PendingCall[] = [];
-
-    const groups = new Map<string, WhatIfAlternative[]>();
-    for (const a of whatIfs.data?.alternatives ?? []) {
-      const k = Object.keys(a.choices ?? {}).sort().join('+') || a.id;
-      groups.set(k, [...(groups.get(k) ?? []), a]);
-    }
-    const usedIssues = new Set<string>();
-    for (const [k, opts] of groups) {
-      const meta = CHOICE_TOPIC[k];
-      const ver = opts[0]?.base_version ?? v;
-      const changed = [...new Set(opts.flatMap((o) => (o.changed_lines ?? []).map((c) => `line:${ver}:${c.key}`)))];
-      const fixed = (CHOICE_LINES[k] ?? []).map((key) => `line:${ver}:${key}`);
-      const anchors = [...changed, ...fixed];
-      // A judgment-family issue on the same lines is the same call: merge it in.
-      const related = open.filter((i) => i.id.startsWith('chk:judgment.') && i.nodeIds.some((n) => anchors.includes(n)));
-      related.forEach((i) => usedIssues.add(i.id));
-      const kind = meta?.kind ?? (related.length ? 'judgment' : 'election');
-      const linked = [...new Set([...related.flatMap((i) => i.nodeIds), ...fixed, ...changed.slice(0, 3)])];
-      out.push({
-        key: `whatif:${k}`,
-        kind,
-        topic: meta?.topic ?? opts[0]!.description,
-        why: related.length
-          ? 'Our check flagged it, and the engine computed the alternative treatment.'
-          : `The engine computed ${opts.length === 1 ? 'an alternative' : `${opts.length} alternatives`}; the choice made should be on record.`,
-        sources: [...related.map((i) => ({ label: i.title, issue: i })), ...opts.map((o) => ({ label: `Engine what_if ${o.id}` }))],
-        alternatives: opts.map(optionText),
-        options: opts,
-        nodeIds: linked,
-        anchors,
-        authorityHint: meta?.hint ?? 'Code section, regulation, or firm policy relied on',
-        decided: [],
-      });
-    }
-    for (const i of open.filter((i) => i.id.startsWith('chk:judgment.') && !usedIssues.has(i.id)))
-      out.push({
-        key: `issue:${i.id}`,
-        kind: 'judgment',
-        topic: i.title,
-        why: 'Our check flagged it as a call to make and document.',
-        sources: [{ label: i.title, issue: i }],
-        alternatives: i.suggestion ? [`${i.suggestion.why} (${i.suggestion.nodeId} → ${String(i.suggestion.value)})`] : [],
-        options: [],
-        nodeIds: i.nodeIds,
-        anchors: i.nodeIds.slice(0, 1),
-        authorityHint: 'Code section, regulation, or firm policy relied on',
-        decided: [],
-      });
-    const dd = (issues.data ?? []).find((i) => i.code === 'DUE_DILIGENCE_REQUIRED');
-    if (dd)
-      out.push({
-        key: 'due-diligence',
-        kind: 'due_diligence',
-        topic: 'Form 8867 due diligence: child tax credit and credit for other dependents',
-        why: 'The engine requires Form 8867; filing readiness needs a due diligence record.',
-        sources: [{ label: dd.title, issue: dd }],
-        alternatives: [],
-        options: [],
-        nodeIds: dd.nodeIds,
+  const calls = useMemo<PendingCall[]>(() => {
+    const byIssue = new Map((issues.data ?? []).map((i) => [i.id, i]));
+    const byWhatIf = new Map((whatIfs.data?.alternatives ?? []).map((a) => [a.id, a]));
+    const byJudgment = new Map((judgments.data ?? []).map((j) => [j.id, j]));
+    return (pending.data ?? []).map((c) => {
+      const issueList = c.issueIds.map((id) => byIssue.get(id)).filter((i): i is IssueDto => !!i);
+      const options = c.whatIfIds.map((id) => byWhatIf.get(id)).filter((a): a is WhatIfAlternative => !!a);
+      return {
+        key: c.key,
+        kind: c.kind,
+        topic: c.topic,
+        why: c.why,
+        sources: [...issueList.map((i) => ({ label: i.title, issue: i })), ...c.whatIfIds.map((id) => ({ label: `Engine what_if ${id}` }))],
+        alternatives: c.alternatives,
+        options,
+        nodeIds: c.nodeIds,
         anchors: [],
-        authorityHint: 'IRC §6695(g); Treas. Reg. §1.6695-2',
-        decided: [],
-      });
-
-    for (const c of out)
-      c.decided = all.filter((j) => j.kind === c.kind && (c.kind === 'due_diligence' || j.nodeIds.some((n) => c.anchors.includes(n))));
-    return out;
-  }, [issues.data, whatIfs.data, judgments.data, summary.data?.currentVersion]);
-  return { calls, isLoading: issues.isLoading || whatIfs.isLoading || judgments.isLoading, error: issues.error ?? whatIfs.error ?? judgments.error };
+        authorityHint: c.authorityHint,
+        decided: c.decidedIds.map((id) => byJudgment.get(id)).filter((j): j is JudgmentDto => !!j),
+      };
+    });
+  }, [pending.data, issues.data, whatIfs.data, judgments.data]);
+  return { calls, isLoading: pending.isLoading, error: pending.error ?? issues.error ?? whatIfs.error ?? judgments.error };
 }
 
 export interface ConsideredMark {

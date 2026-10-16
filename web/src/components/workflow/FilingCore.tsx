@@ -6,8 +6,8 @@ import { AlertTriangle, Check, ExternalLink, Lock, RotateCcw, Send, X } from 'lu
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
-import { useIssues } from '../../api/hooks';
-import { useWhatIfs, type FilingResult } from '../../api/workflowHooks';
+import { useEvents, useIssues } from '../../api/hooks';
+import { useReadiness, useWhatIfs, type FilingResult } from '../../api/workflowHooks';
 import { fmtDateTime, fmtNum, humanize } from '../../lib/format';
 import { useDrawer } from '../../state/drawer';
 import { useSession } from '../../state/session';
@@ -408,13 +408,13 @@ export function SubmissionsPanel({ st }: { st: FilingStatusDto }) {
                                   </button>
                                   <Pill tone={f.status === 'open' ? 'bad' : 'ok'}>{f.status === 'open' ? 'issue open' : `issue ${f.status}`}</Pill>
                                   {f.nodeIds.find((x) => x.startsWith('household:')) && (
-                                    <button className="btn-ghost text-xs" onClick={() => drawer.open(f.nodeIds.find((x) => x.startsWith('household:'))!, { act: 'verify' })}>
-                                      Verify the corrected record
+                                    <button className="btn-ghost text-xs" onClick={() => drawer.open(f.nodeIds.find((x) => x.startsWith('household:'))!, { act: 'record' })}>
+                                      Correct the record (with the client's confirmation)
                                     </button>
                                   )}
                                 </div>
                               ))}
-                              {fixes.length === 0 && err.code !== 'STATE-HOLD' && <div className="mt-1 text-xs text-graphite">No workpaper issue is linked to this error yet.</div>}
+                              {fixes.length === 0 && err.code !== 'STATE-HOLD' && s.status === 'rejected' && <RejectionFix s={s} />}
                               {err.code === 'STATE-HOLD' && <div className="mt-1 text-xs text-graphite">Clears when the federal return is accepted; resubmit both together.</div>}
                             </li>
                           );
@@ -436,6 +436,98 @@ export function SubmissionsPanel({ st }: { st: FilingStatusDto }) {
       <ErrorBox error={act.error} />
       {manual && <ManualResult s={manual} onClose={() => setManual(null)} />}
     </Panel>
+  );
+}
+
+/**
+ * D-62: a rejection the system can't map to a cause clears only when a preparer records what
+ * fixed it (citing the change) and a different reviewer or partner confirms it.
+ */
+function RejectionFix({ s }: { s: SubmissionDto }) {
+  const readiness = useReadiness();
+  const events = useEvents();
+  const { nameOf } = useSession();
+  const act = useAction();
+  const fixer = useRoleGate(['preparer', 'reviewer', 'partner'], 'record a fix');
+  const confirmer = useRoleGate([...FILERS], 'confirm a fix');
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState('');
+  const [ref, setRef] = useState('');
+  const mine = (readiness.data?.blockers ?? []).filter((b) => b.code.startsWith('EFILE_REJECTION_FIX') && b.text.includes(`${s.jurisdiction} `));
+  const missing = mine.some((b) => b.code === 'EFILE_REJECTION_FIX_MISSING');
+  const unconfirmed = mine.some((b) => b.code === 'EFILE_REJECTION_FIX_UNCONFIRMED');
+  // Recent value changes to cite: adjustments and corrections, newest first.
+  const recent = (events.data ?? [])
+    .filter((e) => /^(adjustment\.proposed|read\.corrected|household\.corrected)$/.test(e.type))
+    .slice(-8)
+    .reverse()
+    .map((e) => {
+      const p = e.payload as { nodeId?: string; evId?: string; personId?: string };
+      const node = p.nodeId ?? (p.evId ? `ev:${p.evId}` : p.personId ? `household:${p.personId}` : '');
+      return { node, text: `${humanize(e.type)} · ${node} · ${nameOf(e.actor)}${e.reason ? ` · "${e.reason}"` : ''}` };
+    })
+    .filter((x) => x.node);
+  const chosen = ref || recent[0]?.node || '';
+  if (!missing && !unconfirmed) return <div className="mt-1 text-xs font-semibold text-ledger-ink">Fix recorded and confirmed; ready to resubmit.</div>;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+      {missing ? (
+        <>
+          <span className="text-graphite">No workpaper issue explains this error. Record what fixed it before resubmitting.</span>
+          <button className="btn text-xs" disabled={!fixer.allowed} title={fixer.why} onClick={() => setOpen(true)}>
+            Record the fix
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="text-graphite">A fix is recorded; a reviewer or partner other than its author must confirm it.</span>
+          <button
+            className="btn text-xs"
+            disabled={!confirmer.allowed || act.busy === 'confirm'}
+            title={confirmer.why}
+            onClick={() => act.run('confirm', () => api<FilingResult>(`/api/filing/submissions/${s.id}/fix/confirm`, { method: 'POST' }), () => 'Fix confirmed')}
+          >
+            Confirm fix
+          </button>
+        </>
+      )}
+      <ErrorBox error={act.error} />
+      {open && (
+        <Modal title={`Record the fix for ${humanize(s.jurisdiction)}`} onClose={() => setOpen(false)}>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const done = await act.run('fix', () => api<FilingResult>(`/api/filing/submissions/${s.id}/fix`, { method: 'POST', body: { note, refs: chosen ? [chosen] : [] } }), () => 'Fix recorded; awaiting confirmation');
+              if (done) setOpen(false);
+            }}
+          >
+            <Field label="What fixed it" hint="Required. Kept with the submission's history.">
+              <textarea className="input" rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
+            </Field>
+            <Field label="The change that fixed it" hint="Pick a recent adjustment or correction, or type a line / item id (e.g. line:v3:F1040.11).">
+              <select className="input mb-1" value={recent.some((r) => r.node === chosen) ? chosen : ''} onChange={(e) => setRef(e.target.value)}>
+                {recent.map((r, i) => (
+                  <option key={i} value={r.node}>
+                    {r.text}
+                  </option>
+                ))}
+                <option value="">Other (type below)</option>
+              </select>
+              <input className="input" value={ref} onChange={(e) => setRef(e.target.value)} placeholder={chosen || 'line:v3:…'} />
+            </Field>
+            <ErrorBox error={act.error} />
+            <div className="mt-3 flex justify-end gap-2">
+              <button type="button" className="btn" onClick={() => setOpen(false)}>
+                Cancel
+              </button>
+              <button className="btn-primary" disabled={!note.trim() || !chosen || act.busy === 'fix'}>
+                Record fix
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
   );
 }
 

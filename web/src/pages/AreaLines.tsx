@@ -239,7 +239,7 @@ export function AreaLines() {
       <div className="border-t border-rule bg-paper px-6 py-1 text-2xs text-faint">
         <Kbd>j</Kbd> <Kbd>k</Kbd> move · <Kbd>Enter</Kbd> trace · <Kbd>x</Kbd> or shift-click select · <Kbd>v</Kbd> verify (selection or line) · <Kbd>a</Kbd> adjust · <Kbd>n</Kbd> note
       </div>
-      {bulkVerify && sel.length > 0 && <VerifyDialog nodeIds={sel} label={`${sel.length} lines in ${area?.title ?? areaId}`} onClose={() => (setBulkVerify(false), setSelected(new Set()))} />}
+      {bulkVerify && sel.length > 0 && <VerifyDialog nodeIds={sel} revisions={Object.fromEntries((lines.data ?? []).filter((l) => sel.includes(l.id)).map((l) => [l.id, l.revision]))} label={`${sel.length} lines in ${area?.title ?? areaId}`} onClose={() => (setBulkVerify(false), setSelected(new Set()))} />}
     </div>
   );
 }

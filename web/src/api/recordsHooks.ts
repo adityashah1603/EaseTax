@@ -21,6 +21,10 @@ export interface LineDiff {
   change: 'added' | 'removed' | 'changed';
   /** b is the current version and the line carries an approved adjustment. */
   adjusted: boolean;
+  /** The engine's own value for b (differs from b when adjusted). */
+  bEngine?: unknown;
+  adjustmentReason?: string;
+  adjustedBy?: string;
 }
 export interface EngineChange {
   key: string;

@@ -455,6 +455,7 @@ export class Workpaper {
         priorYear: this.b.priorLines[l.key],
         rule: l.rule,
         area: areaOfKey(l.key),
+        revision: this.revision(id),
         openIssues: direct,
         verified: [...this.state.verifications.values()].some((x) => x.nodeId === id),
         adjusted: !!adj,
@@ -479,6 +480,9 @@ export class Workpaper {
         adjustedLines: mine.filter((r) => r.adjusted).length,
         signoffs: [...this.state.signoffs.values()].filter((s) => s.scope === `area:${a.id}` && s.status !== 'withdrawn'),
         considered: this.state.areaConsidered.has(a.id),
+        consideredBy: this.state.areaConsidered.get(a.id)?.by,
+        consideredAt: this.state.areaConsidered.get(a.id)?.at,
+        consideredNote: this.state.areaConsidered.get(a.id)?.note,
         budgetHours: budget[a.id],
         loggedHours: this.state.time.filter((t) => t.area === a.id).reduce((s, t) => s + t.hours, 0),
       };

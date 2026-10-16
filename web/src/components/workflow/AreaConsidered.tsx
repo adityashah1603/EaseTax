@@ -4,15 +4,14 @@ import type { AreaDto, CommandResult } from '@easetax/shared';
 import { ListChecks } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../../api/client';
-import { useConsideredMarks } from '../../api/judgmentHooks';
 import { fmtDateTime } from '../../lib/format';
 import { useSession } from '../../state/session';
 import { useCommand } from '../actions';
 import { ErrorBox, Field, Modal, Tick } from '../ui';
 
 export function AreaConsidered({ area }: { area: AreaDto }) {
-  const marks = useConsideredMarks();
-  const mark = marks.get(area.id);
+  // Who/when/note come with the area now (AreaDto.consideredBy/At/Note).
+  const mark = area.consideredBy ? { by: area.consideredBy, at: area.consideredAt!, note: area.consideredNote } : undefined;
   const { can, nameOf } = useSession();
   const [open, setOpen] = useState(false);
   return (

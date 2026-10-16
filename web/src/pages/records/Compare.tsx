@@ -7,7 +7,7 @@ import { ArrowRight, ChevronDown, ChevronRight, Cpu, PenLine } from 'lucide-reac
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useSummary } from '../../api/hooks';
-import { useAdjustments, useCompare, useEngineChanges, useVersionLines, type LineDiff } from '../../api/recordsHooks';
+import { useCompare, useVersionLines, type LineDiff } from '../../api/recordsHooks';
 import { Num, Pill, Signed } from '../../components/records/kit';
 import { ErrorBox, Loading } from '../../components/ui';
 import { useDrawer } from '../../state/drawer';
@@ -46,11 +46,10 @@ export function Compare() {
   const cmp = useCompare(a, b);
   const linesA = useVersionLines(a);
   const linesB = useVersionLines(b);
-  const adjustments = useAdjustments();
-  // Engine changes for every step between a and b (the endpoint only returns b's own).
-  const [lo, hi] = vnum(a) <= vnum(b) ? [a, b] : [b, a];
-  const steps = versions.filter((v) => vnum(v) > vnum(lo) && vnum(v) <= vnum(hi));
-  const eng = useEngineChanges(steps);
+  // Every engine run between a and b, each with its trigger and changes (from the endpoint).
+  const engineSteps = (cmp.data as { engineSteps?: { version: string; trigger: string; changes: { key: string }[] }[] } | undefined)?.engineSteps ?? [];
+  const steps = engineSteps.map((x) => x.version);
+  const eng = { byVersion: new Map(engineSteps.map((x) => [x.version, x.changes])) };
   const triggers = new Map(summary.data?.versions.map((v) => [v.version, v.trigger]) ?? []);
 
   const [q, setQ] = useState('');
@@ -62,11 +61,10 @@ export function Compare() {
     if (!cmp.data) return [];
     const bRows = new Map((linesB.data ?? []).map((l, i) => [l.key, { l, i }]));
     const aRows = new Map((linesA.data ?? []).map((l, i) => [l.key, { l, i }]));
-    const adjByKey = new Map((adjustments.data ?? []).filter((x) => x.status === 'approved').map((x) => [x.nodeId, x]));
     return cmp.data.diffs.map((d) => {
       const lb = bRows.get(d.key);
       const la = aRows.get(d.key);
-      const engineB = lb ? lb.l.value : d.b;
+      const engineB = d.bEngine !== undefined ? d.bEngine : lb ? lb.l.value : d.b;
       const causes: Cause[] = [];
       if (JSON.stringify(d.a) !== JSON.stringify(engineB) || d.change !== 'changed') causes.push('engine');
       if (b === cur && d.adjusted && JSON.stringify(engineB) !== JSON.stringify(d.b)) causes.push('ours');
@@ -77,12 +75,12 @@ export function Compare() {
         causes: causes.length ? causes : ['engine'],
         steps: stepHits,
         engineB,
-        reason: adjByKey.get(lineId(cur, d.key))?.reason,
+        reason: d.adjustmentReason,
         order: lb?.i ?? la?.i ?? 99999,
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cmp.data, linesA.data, linesB.data, adjustments.data, eng.byVersion.size, b, cur]);
+  }, [cmp.data, linesA.data, linesB.data, b, cur]);
 
   const filtered = rows.filter((r) => (only === 'all' || r.causes.includes(only)) && (!q.trim() || `${r.d.key} ${r.d.label}`.toLowerCase().includes(q.trim().toLowerCase())));
   const forms = useMemo(() => {
@@ -153,7 +151,7 @@ export function Compare() {
       {sameEngine && b === cur && <p className="mb-3 text-sm text-graphite">Same engine run on both sides: the differences below are our approved workpaper adjustments only.</p>}
       {sameEngine && b !== cur && <p className="mb-3 text-sm text-graphite">Pick two different versions, or the current version on the right to see workpaper adjustments.</p>}
 
-      <ErrorBox error={cmp.error ?? eng.error} />
+      <ErrorBox error={cmp.error} />
       {cmp.isLoading ? (
         <Loading what="differences" />
       ) : (

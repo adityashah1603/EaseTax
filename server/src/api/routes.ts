@@ -7,6 +7,7 @@ import type { Actor, WhoAmI } from '@easetax/shared';
 import { estimateEffect, nodeKind, parseLineId } from '@easetax/shared';
 import type { Workpaper } from '../workpaper.ts';
 import { assertCan, clientMayCall, PolicyError } from '../policy/policy.ts';
+import { pendingJudgments } from '../judgments/pending.ts';
 
 const STATUS: Record<PolicyError['code'], number> = { forbidden: 403, policy: 422, invalid: 400, conflict: 409, not_found: 404 };
 
@@ -74,9 +75,29 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
       const y = lb.get(k);
       const xv = x?.value;
       const yv = b === wp.version ? y?.effectiveValue : y?.value;
-      if (JSON.stringify(xv) !== JSON.stringify(yv)) diffs.push({ key: k, label: (y ?? x)!.label, a: xv, b: yv, change: !x ? 'added' : !y ? 'removed' : 'changed', adjusted: y?.adjusted ?? false });
+      if (JSON.stringify(xv) !== JSON.stringify(yv)) {
+        const adj = b === wp.version && y ? wp.state.effectiveAdjustment(y.id) : undefined;
+        diffs.push({
+          key: k,
+          label: (y ?? x)!.label,
+          a: xv,
+          b: yv,
+          // The engine's own value for b, so an adjusted row shows engine and workpaper side by side.
+          bEngine: y?.value,
+          change: !x ? 'added' : !y ? 'removed' : 'changed',
+          adjusted: y?.adjusted ?? false,
+          adjustmentReason: adj?.reason,
+          adjustedBy: adj?.by,
+        });
+      }
     }
-    return { a, b, diffs, engineChanges: wp.b.version(b)?.changes_from_previous ?? [] };
+    // Every engine run between a (exclusive) and b (inclusive), each with its trigger and changes.
+    const order = wp.b.versions.map((v) => v.version);
+    const [ia, ib] = [order.indexOf(a), order.indexOf(b)];
+    const engineSteps = wp.b.versions
+      .filter((_, i) => i > Math.min(ia, ib) && i <= Math.max(ia, ib))
+      .map((v) => ({ version: v.version, trigger: v.trigger, computedAt: v.computed_at, changes: v.changes_from_previous }));
+    return { a, b, diffs, engineSteps, engineChanges: engineSteps.flatMap((s) => s.changes) };
   });
   app.get('/api/search', async (req) => {
     const q = String((req.query as any).q ?? '').toLowerCase().trim();
@@ -230,6 +251,7 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     );
   });
   app.get('/api/judgments', async () => [...wp.state.judgments.values()]);
+  app.get('/api/judgments/pending', async () => pendingJudgments(wp));
 
   app.put('/api/areas/:id/considered', async (req) => {
     const a = who(req);

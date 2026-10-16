@@ -5,7 +5,7 @@ import type { Workpaper } from '../workpaper.ts';
 import { assertCan, PolicyError } from '../policy/policy.ts';
 import { readiness } from '../filing/readiness.ts';
 import { filedSnapshotId, filingState } from '../filing/state.ts';
-import { amendmentDiff, openAmendment, recordClientApproval, recordExtension, recordManualStep, recordResult, submit } from '../filing/commands.ts';
+import { amendmentDiff, confirmRejectionFix, openAmendment, recordClientApproval, recordRejectionFix, recordExtension, recordManualStep, recordResult, submit } from '../filing/commands.ts';
 import { buildNoticeCase, exportNoticeCase } from '../filing/notice.ts';
 import { rollForward } from '../filing/rollforward.ts';
 import { loadSnapshot } from '../filing/snapshot.ts';
@@ -47,6 +47,8 @@ export function registerFilingRoutes(app: FastifyInstance, wp: Workpaper) {
     const r = submit(wp, who(req));
     return ok(r.events, r.data);
   });
+  app.post('/api/filing/submissions/:id/fix', async (req) => ok(recordRejectionFix(wp, who(req), (req.params as { id: string }).id, (req.body ?? {}) as { note?: string; refs?: string[] })));
+  app.post('/api/filing/submissions/:id/fix/confirm', async (req) => ok(confirmRejectionFix(wp, who(req), (req.params as { id: string }).id)));
   app.post('/api/filing/submissions/:id/result', async (req) => {
     const r = recordResult(wp, who(req), (req.params as { id: string }).id, (req.body ?? {}) as any);
     return ok(r.events, r.data);

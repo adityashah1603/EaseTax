@@ -89,6 +89,30 @@ export function recordResult(wp: Workpaper, actor: Actor, submissionId: string, 
   return { events: step(wp, actor, 'submission_result', data), data };
 }
 
+/**
+ * Record what fixed an e-file rejection (D-62). For causes the system can map (a household
+ * member's TIN), the actual correction is still required; this record is how any other
+ * rejection gets cleared. It must cite what changed and be confirmed by someone else.
+ */
+export function recordRejectionFix(wp: Workpaper, actor: Actor, submissionId: string, body: { note?: string; refs?: string[] }) {
+  assertCan(actor, 'verify');
+  const sub = filingState(wp).submissions.find((s) => s.id === submissionId);
+  if (!sub) throw new PolicyError(`No submission ${submissionId}`, 'not_found');
+  if (sub.status !== 'rejected') throw new PolicyError(`Submission ${submissionId} was not rejected`, 'conflict');
+  if (!body.note?.trim()) throw new PolicyError('Say what fixed the rejection', 'invalid');
+  const refs = (body.refs ?? []).filter(Boolean);
+  if (!refs.length) throw new PolicyError('Cite the change that fixed it (an adjustment, correction, note or line)', 'invalid');
+  return step(wp, actor, 'rejection_fix', { submissionId, errors: sub.errors, note: body.note, refs }, body.note);
+}
+
+export function confirmRejectionFix(wp: Workpaper, actor: Actor, submissionId: string) {
+  assertCan(actor, 'filing');
+  const fix = [...wp.state.filingSteps].reverse().find((s) => s.step === 'rejection_fix' && (s.data as any)?.submissionId === submissionId);
+  if (!fix) throw new PolicyError('No fix recorded for this rejection yet', 'conflict');
+  if (fix.by === actor.id) throw new PolicyError('A person may not review or sign off on work they prepared.', 'policy', 'A person may not review or sign off on work they prepared.');
+  return step(wp, actor, 'rejection_fix_confirmed', { submissionId, fixSeq: fix.seq });
+}
+
 export function openAmendment(wp: Workpaper, actor: Actor, body: { baseSnapshotId?: string; reason?: string }) {
   assertCan(actor, 'filing');
   const base = body.baseSnapshotId ?? filedSnapshotId(wp);
