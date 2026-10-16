@@ -878,7 +878,11 @@ export class Workpaper {
     }
     const value = coerceRead(e.value_type, rawValue);
     const current = this.state.correctionFor(evId)?.correctedValue ?? e.value;
-    if (JSON.stringify(current) === JSON.stringify(value)) throw new PolicyError(`It already reads ${String(value)}`, 'conflict');
+    if (JSON.stringify(current) === JSON.stringify(value))
+      throw new PolicyError(
+        `${String(value)} is what the ${this.state.correctionFor(evId) ? 'corrected' : "pipeline's"} read already says, so there is nothing to change. Type the value as the page prints it.`,
+        'conflict',
+      );
     return this.commit(actor, [
       {
         type: 'read.corrected',

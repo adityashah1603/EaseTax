@@ -175,6 +175,9 @@ export function CorrectReadDialog({ node, onClose }: { node: NodeSummary; onClos
   const [reason, setReason] = useState(pre?.reason ?? '');
   const run = useCommand();
   const s = useSubmit();
+  // What the read check found on the page, if it found one clear value (D-66).
+  const printed = useIssues().data?.find((i) => i.suggestion?.nodeId === node.id && i.status === 'open')?.suggestion;
+  const same = !!value.trim() && value.trim() === String(node.effectiveValue ?? node.value);
   return (
     <Modal title="Correct the read" onClose={onClose} width={500}>
       <form
@@ -203,7 +206,16 @@ export function CorrectReadDialog({ node, onClose }: { node: NodeSummary; onClos
           </div>
         </div>
         <Field label="What the page prints" hint="Type it as printed. Amounts as numbers, dates as YYYY-MM-DD, EINs as NN-NNNNNNN.">
-          <input className="input num" value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+          <input className="input num" value={value} onChange={(e) => setValue(e.target.value)} autoFocus autoComplete="off" />
+          {printed && String(printed.value) !== value.trim() && (
+            <div className="mt-1 flex items-center gap-2 text-xs text-graphite">
+              Our check found the page prints <span className="num font-semibold text-ink">{fmtValue(printed.value)}</span>
+              <button type="button" className="font-semibold text-ledger-ink underline underline-offset-2" onClick={() => setValue(String(printed.value))}>
+                Use it
+              </button>
+            </div>
+          )}
+          {same && <div className="mt-1 text-xs font-semibold text-pencil">That is the current read, not a correction. Type what the page prints.</div>}
         </Field>
         <Field label="Why" hint="Required. Kept in the history with your name.">
           <textarea className="input" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. D62 page 1 prints 74-3829156; the read swapped two digits" />
@@ -217,7 +229,7 @@ export function CorrectReadDialog({ node, onClose }: { node: NodeSummary; onClos
           <button type="button" className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn-primary" disabled={s.busy || !value.trim() || !reason.trim()}>
+          <button className="btn-primary" disabled={s.busy || !value.trim() || !reason.trim() || same}>
             Record correction
           </button>
         </div>

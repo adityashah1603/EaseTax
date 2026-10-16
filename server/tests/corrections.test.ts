@@ -62,7 +62,7 @@ describe('correct the read (D-38)', () => {
   it('requires a reason and a value of the right type', () => {
     expect(() => wp.correctRead(A('st-01'), 'ev:ev-1045', '74-3829156', ' ')).toThrow(/Say why/);
     expect(() => wp.correctRead(A('st-01'), 'ev:ev-1045', '743829156', 'x')).toThrow(/EIN as NN-NNNNNNN/);
-    expect(() => wp.correctRead(A('st-01'), 'ev:ev-1045', '74-3829516', 'x')).toThrow(/already reads/);
+    expect(() => wp.correctRead(A('st-01'), 'ev:ev-1045', '74-3829516', 'x')).toThrow(/read already says, so there is nothing to change/);
     expect(() => wp.correctRead(A('cu-01'), 'ev:ev-1045', '74-3829156', 'x')).toThrow(/cannot/);
   });
 
