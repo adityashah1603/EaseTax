@@ -76,6 +76,23 @@ export interface IssueDto {
   /** Suggested corrected value for a line, if the check computed one. */
   suggestion?: { nodeId: string; value: unknown; why: string };
   area?: string;
+  /** Who closed it and when (resolved or accepted). */
+  closedBy?: string;
+  closedAt?: string;
+  /** D-65: the second person who confirmed the closure. */
+  confirmedBy?: string;
+  confirmedAt?: string;
+  /** D-65: closed by one person, waiting for a reviewer or partner to confirm; the issue still counts as open. */
+  awaitingConfirmation?: { status: 'resolved' | 'accepted'; resolution: string; by: string; at: string };
+}
+
+/** D-65: one of my own actions (a command's events), newest first, with whether it can still be undone. */
+export interface MyActionDto {
+  target: { batchId: string } | { eventId: string };
+  events: WorkEvent[];
+  undone: boolean;
+  undoable: boolean;
+  whyNot?: string;
 }
 
 export interface VerificationDto {

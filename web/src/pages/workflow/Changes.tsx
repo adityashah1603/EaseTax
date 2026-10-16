@@ -1,17 +1,20 @@
 // "What changed since I last looked" (FR-3.2): other people's events after my last
 // mark-seen, grouped by the item they touched; each group opens the trace drawer.
+// "My actions" (D-65): my own actions, newest first, each undoable after the toast is gone.
 import type { WorkEvent } from '@easetax/shared';
-import { CheckCheck } from 'lucide-react';
-import { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import clsx from 'clsx';
+import { CheckCheck, Undo2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
-import { useAdjustments, useIssues, useNotes, useQuestions } from '../../api/hooks';
+import { useAdjustments, useInvalidateAll, useIssues, useMyActions, useNotes, useQuestions } from '../../api/hooks';
 import { useChangesSinceSeen } from '../../api/workflowHooks';
 import { describeEvent, eventNodes, useAction } from '../../components/workflow/bits';
 import { Empty, ErrorBox, Loading } from '../../components/ui';
 import { fmtDateTime, humanize, NODE_KIND_LABEL } from '../../lib/format';
 import { useDrawer } from '../../state/drawer';
 import { useSession } from '../../state/session';
+import { useToast } from '../../state/toast';
 
 interface Group {
   key: string;
@@ -22,6 +25,119 @@ interface Group {
 }
 
 export function Changes() {
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'mine' ? 'mine' : 'others';
+  return (
+    <div className="mx-auto max-w-[960px] px-6 py-5">
+      <div className="mb-4 flex gap-1 border-b border-rule" role="tablist">
+        {([['others', 'Since you last looked'], ['mine', 'My actions']] as const).map(([t, label]) => (
+          <button
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            className={clsx('-mb-px border-b-2 px-3 py-1.5 text-sm', tab === t ? 'border-ink font-semibold' : 'border-transparent text-graphite hover:text-ink')}
+            onClick={() => setParams(t === 'mine' ? { tab: 'mine' } : {}, { replace: true })}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === 'mine' ? <MyActions /> : <SinceLastSeen />}
+    </div>
+  );
+}
+
+/** D-65: my own actions; Undo works at any time, not only while the toast shows. */
+function MyActions() {
+  const mine = useMyActions();
+  const issues = useIssues();
+  const { can } = useSession();
+  const drawer = useDrawer();
+  const invalidate = useInvalidateAll();
+  const toast = useToast();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const rows = mine.data ?? [];
+  const keyOf = (t: object) => JSON.stringify(t);
+  return (
+    <>
+      <h1 className="font-serif text-2xl font-semibold">My actions</h1>
+      <p className="mb-4 text-sm text-graphite">
+        Everything you did, newest first. Undo takes an action back at any time and is itself kept in the history. Only your own actions are listed; ask the
+        person who did something else to undo it, or reopen the issue.
+      </p>
+      <ErrorBox error={mine.error} />
+      {mine.isLoading ? (
+        <Loading what="your actions" />
+      ) : rows.length === 0 ? (
+        <Empty>You haven't done anything on this return yet.</Empty>
+      ) : (
+        <ul className="overflow-hidden rounded border border-rule bg-panel">
+          {rows.map((r) => {
+            const e = r.events[0]!;
+            const k = keyOf(r.target);
+            const issueId = (e.payload as { issueId?: string }).issueId;
+            const nodes = issueId ? issues.data?.find((i) => i.id === issueId)?.nodeIds ?? [] : eventNodes(e);
+            const node = nodes.find((n) => n.startsWith('line:')) ?? nodes.find((n) => !n.startsWith('diag:'));
+            return (
+              <li key={k} className={clsx('flex items-start gap-3 border-b border-ruleSoft px-3 py-2 last:border-0', r.undone && 'opacity-60')}>
+                <span className="num w-[110px] shrink-0 pt-0.5 text-xs text-faint">{fmtDateTime(e.at)}</span>
+                <div className="min-w-0 flex-1 text-sm">
+                  <span className={clsx(r.undone && 'line-through')}>{describeEvent(e)}</span>
+                  {r.events.length > 1 && <span className="text-graphite"> ({r.events.length} items at once)</span>}
+                  {r.undone && <span className="ml-2 rounded bg-ruleSoft px-1.5 text-2xs font-semibold text-graphite">undone</span>}
+                  {e.reason && <span className="block text-xs text-graphite">“{e.reason}”</span>}
+                  {(e.payload as { resolution?: string }).resolution && <span className="block text-xs text-graphite">“{(e.payload as { resolution?: string }).resolution}”</span>}
+                  {node && (
+                    <button className="block font-mono text-xs text-blue-ink underline decoration-dotted underline-offset-2" onClick={() => drawer.open(node)}>
+                      {node}
+                    </button>
+                  )}
+                  {!r.undone && !r.undoable && r.whyNot && <span className="block text-xs text-faint">Can't be undone: {r.whyNot}</span>}
+                </div>
+                {!r.undone && r.undoable && can('undo') && (
+                  confirming === k ? (
+                    <span className="flex shrink-0 items-center gap-1 text-xs">
+                      Undo this?
+                      <button
+                        className="btn-primary text-xs"
+                        disabled={busy === k}
+                        onClick={async () => {
+                          setBusy(k);
+                          try {
+                            await api('/api/undo', { method: 'POST', body: r.target });
+                            toast.push({ tone: 'info', text: 'Undone. The undo is recorded in the history.' });
+                            invalidate();
+                          } catch (x) {
+                            toast.error(x, 'Undo failed');
+                          } finally {
+                            setBusy(null);
+                            setConfirming(null);
+                          }
+                        }}
+                      >
+                        Yes, undo
+                      </button>
+                      <button className="btn-ghost text-xs" onClick={() => setConfirming(null)}>
+                        Keep
+                      </button>
+                    </span>
+                  ) : (
+                    <button className="btn-ghost shrink-0 text-xs" onClick={() => setConfirming(k)}>
+                      <Undo2 size={13} /> Undo
+                    </button>
+                  )
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
+}
+
+function SinceLastSeen() {
   const changes = useChangesSinceSeen();
   const issues = useIssues();
   const notes = useNotes();
@@ -67,7 +183,7 @@ export function Changes() {
   const people = [...new Set(events.map((e) => e.actor))];
 
   return (
-    <div className="mx-auto max-w-[960px] px-6 py-5">
+    <>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-serif text-2xl font-semibold">Since you last looked</h1>
@@ -124,6 +240,6 @@ export function Changes() {
           })}
         </ul>
       )}
-    </div>
+    </>
   );
 }

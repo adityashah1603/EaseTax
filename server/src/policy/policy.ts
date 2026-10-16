@@ -61,7 +61,8 @@ type Action =
   | 'standards'
   | 'filing'
   | 'client_approval'
-  | 'undo';
+  | 'undo'
+  | 'confirm_closure';
 
 const STAFF_WORK: Role[] = ['preparer', 'reviewer', 'partner'];
 
@@ -85,6 +86,7 @@ const ALLOWED: Record<Action, Role[]> = {
   filing: ['reviewer', 'partner'],
   client_approval: ['client'],
   undo: STAFF_WORK,
+  confirm_closure: ['reviewer', 'partner'],
 };
 
 const ACTION_TEXT: Partial<Record<Action, string>> = {

@@ -1,24 +1,7 @@
 // React Query hooks over the REST API (design §5). Every query is invalidated when the
 // SSE stream reports committed events, so all screens stay live without polling.
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import type {
-  AdjustmentDto,
-  AreaDto,
-  CommandResult,
-  DocumentDetailDto,
-  DocumentDto,
-  IssueDto,
-  LineRow,
-  NodeDetail,
-  NodeSummary,
-  QuestionDto,
-  ReturnSummaryDto,
-  ReviewNoteDto,
-  SignoffDto,
-  TraceNode,
-  WhoAmI,
-  WorkEvent,
-} from '@easetax/shared';
+import type { AdjustmentDto, AreaDto, CommandResult, DocumentDetailDto, DocumentDto, IssueDto, LineRow, MyActionDto, NodeDetail, NodeSummary, QuestionDto, ReturnSummaryDto, ReviewNoteDto, SignoffDto, TraceNode, WhoAmI, WorkEvent } from '@easetax/shared';
 import { useMemo } from 'react';
 import { api, enc } from './client';
 import { useReplayAt } from '../components/workflow/replayClock';
@@ -98,6 +81,9 @@ export function useAreaIndex() {
 /** Adjustments by status; `proposed` ones wait for a partner (the partner queue). */
 export const useAdjustments = (status?: AdjustmentDto['status']) =>
   useQuery({ queryKey: ['adjustments', status ?? 'all'], queryFn: () => api<AdjustmentDto[]>(`/api/adjustments${status ? `?status=${status}` : ''}`) });
+
+/** D-65: my own actions, newest first, each with whether it can still be undone. */
+export const useMyActions = () => useQuery({ queryKey: ['my-actions'], queryFn: () => api<MyActionDto[]>('/api/my-actions') });
 
 /** What POST /api/undo needs to reverse a command: its batch, else its event(s). */
 export function undoTargetsFor(result: CommandResult): { batchId?: string; eventId?: string }[] {

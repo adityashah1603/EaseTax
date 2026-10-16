@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAreaIndex, useAreas, useDocuments, useIssues, useNotes, useAdjustments, useQuestions, useSignoffs, useSummary } from '../api/hooks';
 import { ReasonDialog, useCommand } from '../components/actions';
+import { ClosureLine, IssueClosureButtons } from '../components/trace/sections';
 import { Empty, Kbd, Loading, SeverityDot, SourceChip } from '../components/ui';
 import { fmtEffect, fmtValue, humanize } from '../lib/format';
 import { useListNav } from '../lib/useListNav';
@@ -61,6 +62,7 @@ export function Queue() {
   const [kinds, setKinds] = useState<Set<Kind>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulk, setBulk] = useState<null | 'resolved' | 'accepted'>(null);
+  const [tab, setTab] = useState<'open' | 'closed'>('open');
   const run = useCommand();
   const listRef = useRef<HTMLUListElement>(null);
 
@@ -113,7 +115,9 @@ export function Queue() {
           rank: i.severity === 'error' ? 2 : i.severity === 'warning' ? 3 : 6,
           severity: i.severity,
           title: i.title,
-          sub: i.detail,
+          sub: i.awaitingConfirmation
+            ? `${humanize(i.awaitingConfirmation.status)} by ${nameOf(i.awaitingConfirmation.by)}, waiting for a reviewer or partner to confirm: “${i.awaitingConfirmation.resolution}”`
+            : i.detail,
           area: i.area ?? areaOf(i.nodeIds),
           nodeId: primaryNode(i.nodeIds),
           issue: i,
@@ -147,6 +151,9 @@ export function Queue() {
     return out.sort((a, b) => a.rank - b.rank);
   }, [notes.data, signoffs.data, proposed.data, issues.data, questions.data, docs.data, actorId, isPartner, areaOf, nameOf, navigate, areas.data]);
 
+  const closed = (issues.data ?? [])
+    .filter((i) => i.status !== 'open' && (area === 'all' ? true : area === 'none' ? !i.area : i.area === area))
+    .sort((a, b) => (b.closedAt ?? '').localeCompare(a.closedAt ?? ''));
   const visible = items.filter((i) => (area === 'all' ? true : area === 'none' ? !i.area : i.area === area) && (kinds.size === 0 || kinds.has(i.kind)));
 
   const openItem = (it: Item) => (it.go ? it.go() : it.nodeId ? drawer.open(it.nodeId) : undefined);
@@ -206,6 +213,38 @@ export function Queue() {
         </div>
       </div>
 
+      <div className="mb-3 flex gap-1 border-b border-rule" role="tablist">
+        {(['open', 'closed'] as const).map((t) => (
+          <button key={t} role="tab" aria-selected={tab === t} className={clsx('-mb-px border-b-2 px-3 py-1.5 text-sm', tab === t ? 'border-ink font-semibold' : 'border-transparent text-graphite hover:text-ink')} onClick={() => setTab(t)}>
+            {t === 'open' ? 'Open' : 'Resolved & accepted'} <span className="num text-xs text-faint">{t === 'open' ? items.length : closed.length}</span>
+          </button>
+        ))}
+      </div>
+
+      {tab === 'closed' ? (
+        closed.length === 0 ? (
+          <Empty>No closed issues{area !== 'all' ? ' in this area' : ''} yet.</Empty>
+        ) : (
+          <ul className="overflow-hidden rounded border border-rule bg-panel" aria-label="Closed issues">
+            {closed.map((i) => (
+              <li key={i.id} className="flex items-start gap-3 border-b border-ruleSoft px-3 py-2 last:border-0">
+                <span className="mt-1.5"><SeverityDot severity={i.severity} /></span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5 text-2xs">
+                    <span className="font-semibold text-ledger">{humanize(i.status)}</span>
+                    <SourceChip source={i.source} />
+                    {i.area && <span className="text-faint">{areaTitle(i.area)}</span>}
+                  </div>
+                  <button className="mt-0.5 text-left text-sm leading-snug hover:underline" onClick={() => drawer.open(primaryNode(i.nodeIds)!)}>{i.title}</button>
+                  <ClosureLine issue={i} />
+                </div>
+                <IssueClosureButtons issue={i} />
+              </li>
+            ))}
+          </ul>
+        )
+      ) : (
+      <>
       <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Filter by kind">
         {(Object.keys(KIND_LABEL) as Kind[]).map((k) => {
           const on = kinds.has(k);
@@ -300,6 +339,8 @@ export function Queue() {
         <Kbd>j</Kbd> <Kbd>k</Kbd> move · <Kbd>Enter</Kbd> open trace · <Kbd>x</Kbd> select issue · <Kbd>v</Kbd> verify · <Kbd>n</Kbd> note. Engine diagnostics and our own checks are marked
         apart, so you can see what the engine missed.
       </p>
+      </>
+      )}
 
       {bulk && (
         <ReasonDialog

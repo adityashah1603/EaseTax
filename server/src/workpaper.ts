@@ -13,6 +13,7 @@ import type {
   PacketPerson,
   ReadCorrectionDto,
   LineRow,
+  MyActionDto,
   NodeDetail,
   NodeSummary,
   ReturnSummaryDto,
@@ -33,6 +34,16 @@ import { relatedReturns } from './baseline/related.ts';
 import { assertCan, canSignLevel, maskDeep, maskText, maskValue, PolicyError, RULES, SENSITIVE_VALUE_TYPES, actorsFrom } from './policy/policy.ts';
 
 export type Listener = (events: WorkEvent[]) => void;
+
+/** D-65: actions that stay on the record; Undo would hide them. */
+const NOT_UNDOABLE: Partial<Record<WorkEvent['type'], string>> = {
+  'sensitive.unmasked': 'viewing a sensitive field stays in the access log.',
+  'filing.step': 'filing steps are records of what was sent and received; record a fix or open an amendment instead.',
+  'events.undone': 'an undo is itself kept in the history.',
+  'signoff.reopened': 'the system reopened this sign-off because its content changed.',
+};
+/** Bookkeeping events that aren't actions a person would want to take back. */
+const HIDDEN_FROM_MY_ACTIONS = new Set<WorkEvent['type']>(['seen.marked', 'notification.read', 'events.undone']);
 
 export class Workpaper {
   readonly g: Graph;
@@ -144,14 +155,11 @@ export class Workpaper {
     }));
     const all: IssueDto[] = [];
     for (const i of found) {
-      const st = this.state.issueStatus.get(i.id);
       const area = i.area ?? this.areaOfNodes(i.nodeIds);
-      all.push({ ...i, source: i.source ?? 'check', status: st?.status ?? 'open', resolution: st?.resolution, resolvedByJudgment: st?.judgmentId, area });
+      const source = i.source ?? 'check';
+      all.push({ ...i, source, area, ...this.closureOf(i.id, source === 'check' || source === 'engine' ? i.severity : undefined) });
     }
-    for (const h of this.state.humanIssues.values()) {
-      const st = this.state.issueStatus.get(h.id);
-      all.push({ ...h, status: st?.status ?? 'open', resolution: st?.resolution, area: this.areaOfNodes(h.nodeIds) });
-    }
+    for (const h of this.state.humanIssues.values()) all.push({ ...h, area: this.areaOfNodes(h.nodeIds), ...this.closureOf(h.id) });
     this.issuesByNode.clear();
     for (const i of all) {
       for (const n of i.nodeIds) {
@@ -162,6 +170,30 @@ export class Workpaper {
     }
     this.issuesCache = all;
     return all;
+  }
+
+  /**
+   * Status fields for an issue. D-65: closing an error found by a check or the engine by hand
+   * needs a reviewer or partner other than the closer to confirm; until then it stays open.
+   * A judgment's closure (D-53) carries its own authority and needs no second confirmation.
+   */
+  private closureOf(id: string, severity?: IssueDto['severity']): Pick<IssueDto, 'status' | 'resolution' | 'resolvedByJudgment' | 'closedBy' | 'closedAt' | 'confirmedBy' | 'confirmedAt' | 'awaitingConfirmation'> {
+    const st = this.state.issueStatus.get(id);
+    if (!st || st.status === 'open') return { status: 'open' };
+    if (st.judgmentId) return { status: st.status, resolution: st.resolution, resolvedByJudgment: st.judgmentId, closedBy: st.by, closedAt: st.at };
+    if (severity === 'error' && !st.confirmedBy) return { status: 'open', awaitingConfirmation: { status: st.status, resolution: st.resolution ?? '', by: st.by, at: st.at } };
+    return { status: st.status, resolution: st.resolution, closedBy: st.by, closedAt: st.at, confirmedBy: st.confirmedBy, confirmedAt: st.confirmedAt };
+  }
+
+  /** D-65: a reviewer or partner other than the closer confirms closing an error. */
+  confirmIssueClosure(actor: Actor, issueId: string) {
+    assertCan(actor, 'confirm_closure');
+    const issue = this.issues().find((i) => i.id === issueId);
+    if (!issue) throw new PolicyError('No such issue', 'not_found');
+    const w = issue.awaitingConfirmation;
+    if (!w) throw new PolicyError('This issue is not waiting for a confirmation', 'conflict');
+    if (w.by === actor.id) throw new PolicyError(RULES.noSelfReview, 'policy', RULES.noSelfReview);
+    return this.commit(actor, [{ type: 'issue.closure_confirmed', payload: { issueId } }]);
   }
 
   issuesFor(nodeId: string): IssueDto[] {
@@ -722,7 +754,34 @@ export class Workpaper {
       .filter((e) => !this.state.undone.has(e.id));
     if (!ids.length) throw new PolicyError('Nothing to undo', 'not_found');
     if (ids.some((e) => e.actor !== actor.id)) throw new PolicyError('You can only undo your own actions', 'forbidden');
+    const kept = ids.find((e) => NOT_UNDOABLE[e.type]);
+    if (kept) throw new PolicyError(`This can't be undone: ${NOT_UNDOABLE[kept.type]}`, 'conflict');
     return this.commit(actor, [{ type: 'events.undone', payload: { eventIds: ids.map((e) => e.id) } }]);
+  }
+
+  /** D-65: my own actions, newest first, one entry per command (its batch, else its event). */
+  myActions(actor: Actor, limit = 100): MyActionDto[] {
+    const groups = new Map<string, WorkEvent[]>();
+    for (const e of this.state.events) {
+      if (e.actor !== actor.id || HIDDEN_FROM_MY_ACTIONS.has(e.type)) continue;
+      const k = e.batchId ? `b:${e.batchId}` : `e:${e.id}`;
+      const g = groups.get(k) ?? [];
+      g.push(e);
+      groups.set(k, g);
+    }
+    return [...groups.values()]
+      .sort((a, b) => b.at(-1)!.seq - a.at(-1)!.seq)
+      .slice(0, limit)
+      .map((g) => {
+        const kept = g.find((e) => NOT_UNDOABLE[e.type]);
+        return {
+          target: g[0]!.batchId ? { batchId: g[0]!.batchId } : { eventId: g[0]!.id },
+          events: g.map((e) => this.publicEvent(e)),
+          undone: g.every((e) => this.state.undone.has(e.id)),
+          undoable: !kept && (actor.role === 'preparer' || actor.role === 'reviewer' || actor.role === 'partner'),
+          whyNot: kept ? NOT_UNDOABLE[kept.type] : undefined,
+        };
+      });
   }
 
   // ---------------------------------------------------------------- revisions (D-57)

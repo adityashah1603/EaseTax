@@ -46,7 +46,7 @@ export class WorkState {
   householdCorrections = new Map<string, HouseholdCorrectionDto>();
   /** "<personId>.<field>" -> household correction in force */
   activeHousehold = new Map<string, string>();
-  issueStatus = new Map<string, { status: 'resolved' | 'accepted' | 'open'; resolution?: string; judgmentId?: string } & Stamped>();
+  issueStatus = new Map<string, { status: 'resolved' | 'accepted' | 'open'; resolution?: string; judgmentId?: string; confirmedBy?: string; confirmedAt?: string } & Stamped>();
   humanIssues = new Map<string, IssueDto>();
   notes = new Map<string, ReviewNoteDto>();
   questions = new Map<string, QuestionDto>();
@@ -218,6 +218,11 @@ export class WorkState {
       case 'issue.reopened':
         this.issueStatus.set(p.issueId, { status: 'open', ...stamp });
         break;
+      case 'issue.closure_confirmed': {
+        const st = this.issueStatus.get(p.issueId);
+        if (st && st.status !== 'open') Object.assign(st, { confirmedBy: e.actor, confirmedAt: e.at });
+        break;
+      }
       case 'note.created':
         this.notes.set(p.noteId, { id: p.noteId, nodeIds: p.nodeIds, blocking: p.blocking, status: 'open', thread: [{ by: e.actor, at: e.at, text: p.text }], ...stamp });
         for (const n of p.nodeIds) this.touch(n, e);

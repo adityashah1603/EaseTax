@@ -55,6 +55,9 @@ function makeReady() {
   wp.commit(prep, [{ type: 'judgment.recorded', payload: { judgmentId: 'dd1', kind: 'due_diligence', topic: 'Form 8867 CTC/ODC', decision: 'Completed', alternatives: [], authority: 'IRC 6695(g)', nodeIds: ['line:v3:F8867.status'] } }]);
   const open = wp.issues().filter((i) => i.status === 'open' && i.severity !== 'info').map((i) => i.id);
   if (open.length) wp.commit(prep, open.map((issueId) => ({ type: 'issue.resolved' as const, payload: { issueId, status: 'accepted' as const, resolution: 'reviewed' } })));
+  // D-65: errors closed by hand need a second person to confirm.
+  const waiting = wp.issues().filter((i) => i.awaitingConfirmation).map((i) => i.id);
+  if (waiting.length) wp.commit(A('st-02'), waiting.map((issueId) => ({ type: 'issue.closure_confirmed' as const, payload: { issueId } })));
   wp.signoff(A('st-02'), 'return', 'reviewer');
   wp.signoff(A('st-03'), 'return', 'partner');
   recordClientApproval(wp, A('cu-01'), { pins: { taxpayer: '41207', spouse: '88310' }, consent: true });

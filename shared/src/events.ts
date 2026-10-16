@@ -32,6 +32,8 @@ export interface EventPayloads {
   'household.correction_reverted': { correctionId: string };
   'issue.resolved': { issueId: string; status: 'resolved' | 'accepted'; resolution: string };
   'issue.reopened': { issueId: string };
+  /** D-65: a second person (reviewer or partner) confirms closing an error found by a check or the engine. */
+  'issue.closure_confirmed': { issueId: string };
   'issue.raised': { issueId: string; nodeIds: string[]; title: string; detail?: string; severity: 'info' | 'warning' | 'error' };
   'note.created': { noteId: string; nodeIds: string[]; text: string; blocking: boolean };
   'note.replied': { noteId: string; text: string };

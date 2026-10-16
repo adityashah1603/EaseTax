@@ -6,7 +6,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { getActor, setActor } from '../api/client';
 import { useMe } from '../api/hooks';
 
-type Action = 'verify' | 'adjust' | 'approve' | 'note' | 'resolve' | 'ask' | 'attach' | 'disposition' | 'signoff' | 'undo';
+type Action = 'verify' | 'adjust' | 'approve' | 'note' | 'resolve' | 'ask' | 'attach' | 'disposition' | 'signoff' | 'undo' | 'confirm';
 
 const STAFF_WORK: Role[] = ['preparer', 'reviewer', 'partner'];
 const ALLOWED: Record<Action, Role[]> = {
@@ -20,6 +20,7 @@ const ALLOWED: Record<Action, Role[]> = {
   disposition: STAFF_WORK,
   signoff: STAFF_WORK,
   undo: STAFF_WORK,
+  confirm: ['reviewer', 'partner'],
 };
 
 interface Session {

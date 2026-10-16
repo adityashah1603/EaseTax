@@ -136,6 +136,7 @@ const EVENT_TEXT: Record<string, string> = {
   'adjustment.rejected': 'rejected an adjustment',
   'adjustment.reverted': 'reverted an adjustment',
   'issue.resolved': 'resolved an issue',
+  'issue.closure_confirmed': 'confirmed an issue closure',
   'issue.reopened': 'reopened an issue',
   'issue.raised': 'raised an issue',
   'note.created': 'wrote a review note',

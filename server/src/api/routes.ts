@@ -224,14 +224,20 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     assertCan(a, 'resolve_issue');
     const b = req.body as { issueIds: string[]; status: 'resolved' | 'accepted'; resolution: string };
     if (!b.resolution?.trim()) throw new PolicyError('Resolution needs an explanation', 'invalid');
+    // D-65: a reason a reviewer can act on, not a placeholder like "123".
+    const words = b.resolution.trim().split(/\s+/).filter((w) => /[a-z]/i.test(w));
+    if (words.length < 3 || b.resolution.trim().length < 15) throw new PolicyError('Say why in a sentence (at least 3 words) so a reviewer can check it.', 'invalid');
     const batchId = b.issueIds.length > 1 ? randomUUID() : undefined;
     return ok(wp.commit(a, b.issueIds.map((issueId) => ({ type: 'issue.resolved' as const, payload: { issueId, status: b.status, resolution: b.resolution }, batchId }))));
   });
   app.post('/api/issues/:id/reopen', async (req) => {
     const a = who(req);
     assertCan(a, 'resolve_issue');
-    return ok(wp.commit(a, [{ type: 'issue.reopened', payload: { issueId: decodeURIComponent((req.params as any).id) } }]));
+    const reason = (req.body as { reason?: string } | undefined)?.reason?.trim() || undefined;
+    return ok(wp.commit(a, [{ type: 'issue.reopened', payload: { issueId: decodeURIComponent((req.params as any).id) }, reason }]));
   });
+  app.post('/api/issues/:id/confirm', async (req) => ok(wp.confirmIssueClosure(who(req), decodeURIComponent((req.params as any).id))));
+  app.get('/api/my-actions', async (req) => wp.myActions(who(req)));
 
   app.post('/api/judgments', async (req) => {
     const a = who(req);

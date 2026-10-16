@@ -31,11 +31,11 @@ export function IssueCard({ issue, currentNodeId }: { issue: IssueDto; currentNo
   const { can } = useSession();
   const drawer = useDrawer();
   const run = useCommand();
-  const toast = useToast();
   const [resolving, setResolving] = useState<null | 'resolved' | 'accepted'>(null);
-  const open = issue.status === 'open';
+  const waiting = issue.awaitingConfirmation;
+  const open = issue.status === 'open' && !waiting;
   return (
-    <div className={clsx('mb-2 rounded border px-3 py-2', open ? 'border-rule bg-panel' : 'border-ruleSoft bg-paper opacity-80')}>
+    <div className={clsx('mb-2 rounded border px-3 py-2', issue.status === 'open' ? 'border-rule bg-panel' : 'border-ruleSoft bg-paper opacity-80')}>
       <div className="flex items-start gap-2">
         <span className="mt-1.5">
           <SeverityDot severity={issue.severity} />
@@ -44,12 +44,13 @@ export function IssueCard({ issue, currentNodeId }: { issue: IssueDto; currentNo
           <div className="flex flex-wrap items-center gap-1.5">
             <SourceChip source={issue.source} />
             <span className="text-2xs text-faint">{issue.code}</span>
-            {!open && <span className="text-2xs font-semibold text-ledger">{issue.status}</span>}
+            {issue.status !== 'open' && <span className="text-2xs font-semibold text-ledger">{issue.status}</span>}
+            {waiting && <span className="rounded bg-amber-soft px-1.5 text-2xs font-semibold text-amber-ink">waiting for a reviewer</span>}
           </div>
           <div className="mt-0.5 text-sm">{issue.title}</div>
           {issue.detail && <div className="mt-0.5 text-xs text-graphite">{issue.detail}</div>}
           {issue.effect && <div className="num mt-0.5 text-xs text-graphite">{fmtEffect(issue.effect)}</div>}
-          {issue.resolution && <div className="mt-1 text-xs text-graphite">Resolution: {issue.resolution}</div>}
+          <ClosureLine issue={issue} />
           {issue.suggestion && open && (
             <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded bg-ledger-soft px-2 py-1 text-xs">
               <Lightbulb size={12} className="text-ledger" />
@@ -73,28 +74,19 @@ export function IssueCard({ issue, currentNodeId }: { issue: IssueDto; currentNo
             </div>
           )}
         </div>
-        {can('resolve') && (
-          <div className="flex shrink-0 gap-1">
-            {open ? (
-              <>
-                <button className="btn-ghost text-xs" onClick={() => setResolving('resolved')}>
-                  Resolve
-                </button>
-                <button className="btn-ghost text-xs" onClick={() => setResolving('accepted')} title="Accept as is, with a reason">
-                  Accept
-                </button>
-              </>
-            ) : (
-              <button
-                className="btn-ghost text-xs"
-                onClick={() =>
-                  run(() => api<CommandResult>(`/api/issues/${encodeURIComponent(issue.id)}/reopen`, { method: 'POST' }), { done: 'Issue reopened' }).catch((e) => toast.error(e))
-                }
-              >
-                Reopen
+        {open ? (
+          can('resolve') && (
+            <div className="flex shrink-0 gap-1">
+              <button className="btn-ghost text-xs" onClick={() => setResolving('resolved')}>
+                Resolve
               </button>
-            )}
-          </div>
+              <button className="btn-ghost text-xs" onClick={() => setResolving('accepted')} title="Accept as is, with a reason">
+                Accept
+              </button>
+            </div>
+          )
+        ) : (
+          <IssueClosureButtons issue={issue} />
         )}
       </div>
       {resolving && (
@@ -105,9 +97,71 @@ export function IssueCard({ issue, currentNodeId }: { issue: IssueDto; currentNo
           onClose={() => setResolving(null)}
           onSubmit={(reason) =>
             run(() => api<CommandResult>('/api/issues/resolve', { method: 'POST', body: { issueIds: [issue.id], status: resolving, resolution: reason } }), {
-              done: resolving === 'resolved' ? 'Issue resolved' : 'Issue accepted',
+              done: issue.severity === 'error' && issue.source !== 'human' ? 'Sent to a reviewer to confirm' : resolving === 'resolved' ? 'Issue resolved' : 'Issue accepted',
             })
           }
+        >
+          <p className="mb-2 text-sm text-graphite">{issue.title}</p>
+          {issue.severity === 'error' && issue.source !== 'human' && (
+            <p className="mb-3 text-xs text-graphite">This is an error our checks or the engine found. It stays open until a reviewer or partner other than you confirms your reason.</p>
+          )}
+        </ReasonDialog>
+      )}
+    </div>
+  );
+}
+
+/** Who closed an issue, why, and who confirmed it; or who is waiting for confirmation (D-65). */
+export function ClosureLine({ issue }: { issue: IssueDto }) {
+  const { nameOf } = useSession();
+  const w = issue.awaitingConfirmation;
+  if (w)
+    return (
+      <div className="mt-1 text-xs text-graphite">
+        {humanize(w.status)} by {nameOf(w.by)} on {fmtDateTime(w.at)}: “{w.resolution}”. Counts as open until a reviewer or partner confirms.
+      </div>
+    );
+  if (issue.status === 'open') return null;
+  return (
+    <div className="mt-1 text-xs text-graphite">
+      {issue.resolution && <div>Resolution: {issue.resolution}</div>}
+      {issue.closedBy && (
+        <div className="text-faint">
+          {humanize(issue.status)} by {nameOf(issue.closedBy)} on {fmtDateTime(issue.closedAt)}
+          {issue.confirmedBy && `, confirmed by ${nameOf(issue.confirmedBy)} on ${fmtDateTime(issue.confirmedAt)}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Confirm / send back a closure waiting for a second person, or reopen a closed issue (D-65). */
+export function IssueClosureButtons({ issue }: { issue: IssueDto }) {
+  const { can, actorId } = useSession();
+  const run = useCommand();
+  const [reopening, setReopening] = useState(false);
+  const w = issue.awaitingConfirmation;
+  const id = encodeURIComponent(issue.id);
+  if (!can('resolve') && !can('confirm')) return null;
+  return (
+    <div className="flex shrink-0 gap-1">
+      {w && can('confirm') && w.by !== actorId && (
+        <button className="btn-ghost text-xs font-semibold" onClick={() => run(() => api<CommandResult>(`/api/issues/${id}/confirm`, { method: 'POST' }), { done: `Confirmed: issue ${w.status}` })}>
+          Confirm
+        </button>
+      )}
+      {can('resolve') && (
+        <button className="btn-ghost text-xs" onClick={() => setReopening(true)} title={w ? 'Send it back: the issue stays open' : 'Reopen this issue'}>
+          {w ? (w.by === actorId ? 'Withdraw' : 'Send back') : 'Reopen'}
+        </button>
+      )}
+      {reopening && (
+        <ReasonDialog
+          title={w ? (w.by === actorId ? 'Withdraw your closure' : 'Send back') : 'Reopen issue'}
+          label="Why"
+          confirm={w ? (w.by === actorId ? 'Withdraw' : 'Send back') : 'Reopen'}
+          onClose={() => setReopening(false)}
+          onSubmit={(reason) => run(() => api<CommandResult>(`/api/issues/${id}/reopen`, { method: 'POST', body: { reason } }), { done: 'Issue reopened' })}
         >
           <p className="mb-3 text-sm text-graphite">{issue.title}</p>
         </ReasonDialog>
