@@ -8,7 +8,7 @@ The packet loads with **65 open issues**: 54 come from our own checks (19 errors
 |---|---|---|---|
 | E1 | Theo's SSN is 3309 in the household record; the SS card says 3390 (this causes the e-file rejection) | Rejection | `id.ssn` · error |
 | E2 | Northlake interest of 1,840 is counted twice | +1,840 income | `dup.cross_line` · error |
-| E3 | The 1,099-K of 12,400 is already inside book revenue | +12,400 Sch C | `tp.gross_receipts_1099k` · error |
+| E3 | The 1099-K of 12,400 is already inside book revenue | +12,400 Sch C | `tp.gross_receipts_1099k` · error |
 | E4 | Mileage includes a duplicate scan page (D23 p3) | −2,590 deduction | `dup.page` · error |
 | E5 | SE health insurance of 14,400 while Erik was eligible for his spouse's plan | Should be 0 | `cvd.sehi_eligibility` · error |
 | E6 | SEP contribution exceeds the limit by 2,786 (6% excise tax) | Excise | `recalc.sep_limit` · warning |

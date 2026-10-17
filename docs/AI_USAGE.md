@@ -4,8 +4,8 @@
 
 **What I did:**
 - Set the direction and made every product decision.
-- The AI asked me before each major change. I chose among options, and each choice is logged as a numbered decision (66 so far).
-- Reviewed the app in the browser as each role and reported what felt wrong. For example, the confusing "correct the read" dialog led to D-66.
+- The AI asked me before each major change. I chose among the options it laid out, and kept a log of each decision and its reason.
+- Reviewed the app in the browser as each role and reported what felt wrong. For example, the confusing "correct the read" dialog was redesigned to explain why a value is refused and to offer what the page prints.
 
 **What the AI did:**
 - **Profiling:** read the brief and profiled the packet, which produced the first list of planted errors.
