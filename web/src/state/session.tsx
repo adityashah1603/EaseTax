@@ -31,6 +31,8 @@ interface Session {
   can: (a: Action) => boolean;
   nameOf: (id: string) => string;
   isClient: boolean;
+  /** Staff whose start date is still ahead: the server refuses everything but the session. */
+  notStarted: boolean;
 }
 
 const Ctx = createContext<Session | null>(null);
@@ -66,10 +68,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return a ? a.name : id;
       },
       isClient: actor?.kind === 'client',
+      notStarted: startsLater(actor),
     }),
     [actorId, actor, actors, switchTo],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+export function startsLater(a: Actor | undefined): boolean {
+  return a?.kind === 'staff' && !!a.activeFrom && a.activeFrom > new Date().toISOString().slice(0, 10);
 }
 
 export function useSession() {

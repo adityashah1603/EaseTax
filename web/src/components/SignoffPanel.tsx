@@ -63,7 +63,7 @@ export function SignoffPanel({ scope, compact }: { scope: string; compact?: bool
                 )}
                 {reopened && (
                   <span className="font-semibold text-pencil-ink">
-                    Reopened: {nameOf(s!.by)}'s sign-off no longer matches (event #{s!.reopenedBySeq})
+                    Reopened: {nameOf(s!.by)}'s sign-off no longer matches (event #{s!.reopenedBySeq}){s!.reopenedReason ? ` · ${s!.reopenedReason}` : ''}
                   </span>
                 )}
               </span>

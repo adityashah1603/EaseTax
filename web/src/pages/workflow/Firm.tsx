@@ -459,7 +459,7 @@ function AccessLogPanel() {
   return (
     <Panel
       title="Sensitive-data access log"
-      sub="Every unmasked view of an SSN, bank or account number or IP PIN, with the reason given. Nobody sees these unmasked without leaving a line here."
+      sub="Every unmasked view of an SSN, bank or account number or IP PIN, with the reason given, and every uploaded file opened. Nobody sees these without leaving a line here."
       right={
         gate.allowed && (
           <select className="input w-auto text-xs" value={who} onChange={(e) => setWho(e.target.value)} aria-label="Filter by person">
@@ -480,7 +480,7 @@ function AccessLogPanel() {
       ) : log.error ? (
         <ErrorBox error={log.error} />
       ) : rows.length === 0 ? (
-        <Empty>No sensitive field has been unmasked.</Empty>
+        <Empty>No sensitive field has been unmasked and no uploaded file opened.</Empty>
       ) : (
         <table className="w-full text-sm">
           <thead>

@@ -68,6 +68,8 @@ export interface EventPayloads {
   'assignment.completed': { assignmentId: string };
   'time.logged': { area: string; hours: number; note?: string };
   'sensitive.unmasked': { nodeId: string; field: string };
+  /** Someone opened an uploaded file; kept in the access log next to unmasked views. */
+  'attachment.opened': { attachmentId: string; name: string };
   'firm.standards_updated': { standards: unknown };
   'seen.marked': { seq: number };
   /** The actor marks inbox notifications read (or unread again) (D-59). */

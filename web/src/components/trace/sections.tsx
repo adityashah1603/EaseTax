@@ -8,7 +8,6 @@ import { useStandards } from '../../api/hooks';
 import { fmtDateTime, fmtEffect, fmtValue, humanize, variance } from '../../lib/format';
 import { useDrawer } from '../../state/drawer';
 import { useSession } from '../../state/session';
-import { useToast } from '../../state/toast';
 import { ReasonDialog, useCommand } from '../actions';
 import { ErrorBox, SeverityDot, SourceChip, Tick } from '../ui';
 
@@ -480,9 +479,10 @@ export function VersionsRow({ versions, current }: { versions: NonNullable<NodeD
 }
 
 export function VerificationList({ items }: { items: VerificationDto[] }) {
-  const { nameOf, can } = useSession();
+  const { nameOf, can, actorId, actor } = useSession();
   const run = useCommand();
-  const toast = useToast();
+  const [removing, setRemoving] = useState<VerificationDto | null>(null);
+  const mayRemove = (v: VerificationDto) => can('verify') && (v.by === actorId || actor?.role === 'reviewer' || actor?.role === 'partner');
   if (!items.length) return <div className="text-sm text-faint">Not verified yet. Press v to verify.</div>;
   return (
     <ul className="space-y-1">
@@ -504,16 +504,26 @@ export function VerificationList({ items }: { items: VerificationDto[] }) {
               </div>
             )}
           </div>
-          {can('verify') && (
-            <button
-              className="btn-ghost text-xs"
-              onClick={() => run(() => api<CommandResult>(`/api/verifications/${v.id}`, { method: 'DELETE' }), { done: 'Verification removed' }).catch((e) => toast.error(e))}
-            >
+          {mayRemove(v) && (
+            <button className="btn-ghost text-xs" onClick={() => setRemoving(v)}>
               Remove
             </button>
           )}
         </li>
       ))}
+      {removing && (
+        <ReasonDialog
+          title="Remove verification"
+          label="Why"
+          confirm="Remove"
+          onClose={() => setRemoving(null)}
+          onSubmit={(reason) => run(() => api<CommandResult>(`/api/verifications/${removing.id}`, { method: 'DELETE', body: { reason } }), { done: 'Verification removed' })}
+        >
+          <p className="mb-3 text-sm text-graphite">
+            {humanize(removing.type)} by {nameOf(removing.by)}, {fmtDateTime(removing.at)}
+          </p>
+        </ReasonDialog>
+      )}
     </ul>
   );
 }

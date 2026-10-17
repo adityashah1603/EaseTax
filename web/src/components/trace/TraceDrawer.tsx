@@ -342,6 +342,7 @@ function DrawerBody({ nodeId }: { nodeId: string }) {
 
 function WorkRecord({ d }: { d: NodeDetail }) {
   const drawer = useDrawer();
+  const { actorId } = useSession();
   const judgments = (useJudgments().data ?? []).filter((j) => j.nodeIds.includes(d.node.id));
   return (
     <>
@@ -422,7 +423,7 @@ function WorkRecord({ d }: { d: NodeDetail }) {
                   {e.note && <span className="block text-xs text-graphite">{e.note}</span>}
                 </button>
                 {e.node.id.startsWith('att:') && (
-                  <a className="btn-ghost shrink-0 text-xs" href={`/api/attachments/${e.node.id.slice(4)}/file`} target="_blank" rel="noreferrer">
+                  <a className="btn-ghost shrink-0 text-xs" href={`/api/attachments/${e.node.id.slice(4)}/file?actor=${encodeURIComponent(actorId)}`} target="_blank" rel="noreferrer">
                     file
                   </a>
                 )}

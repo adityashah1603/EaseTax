@@ -8,7 +8,7 @@ import { Workpaper } from '../src/workpaper.ts';
 import { ViewCtx } from '../src/views/ctx.ts';
 import { variances } from '../src/views/summary.ts';
 import { carryoverAgreement } from '../src/views/carryovers.ts';
-import { recordClientApproval, recordResult, submit } from '../src/filing/commands.ts';
+import { openAmendment, recordClientApproval, recordResult, submit } from '../src/filing/commands.ts';
 import { loadSnapshot } from '../src/filing/snapshot.ts';
 import { buildRollForward, rollForward } from '../src/filing/rollforward.ts';
 
@@ -170,6 +170,8 @@ describe('roll-forward traces every item back to 2025', () => {
     makeReady();
     const { snapshot: snap, submissions } = submit(wp, A('st-02')).data;
     for (const s of submissions) recordResult(wp, A('st-02'), s.id, { status: 'accepted', agencySubmissionId: `X-${s.id}` });
+    // Filed and accepted: the return is frozen until an amendment opens.
+    openAmendment(wp, A('st-03'), { reason: 'After filing' });
     wp.proposeAdjustment(A('st-03'), 'line:v3:F1040.24', 1, 'After filing');
     const d = rollForward(wp, A('st-01')).data.document;
     expect(d.builtFrom).toMatchObject({ kind: 'filed_snapshot', snapshotId: snap.id });

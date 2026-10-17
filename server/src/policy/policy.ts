@@ -98,7 +98,20 @@ const ACTION_TEXT: Partial<Record<Action, string>> = {
   log_time: 'log time',
 };
 
+/** Today as YYYY-MM-DD, the date staff start dates are compared against. */
+export const today = () => new Date().toISOString().slice(0, 10);
+
+/** Staff whose start date is still ahead have no access yet (packet firm.staff[].active_from). */
+export function notStarted(actor: Actor): boolean {
+  return actor.kind === 'staff' && !!actor.activeFrom && actor.activeFrom > today();
+}
+
+export function assertStarted(actor: Actor) {
+  if (notStarted(actor)) throw new PolicyError(`${actor.name} starts on ${actor.activeFrom}`, 'forbidden');
+}
+
 export function assertCan(actor: Actor, action: Action) {
+  assertStarted(actor);
   if (!ALLOWED[action].includes(actor.role)) {
     throw new PolicyError(`${actor.name} (${actor.role}) cannot ${ACTION_TEXT[action] ?? action.replace(/_/g, ' ')}`, 'forbidden');
   }
@@ -145,6 +158,27 @@ export function maskText(text: string): string {
     .replace(IBAN_RE, (m) => `${'•'.repeat(4)} ${m.replace(/\s/g, '').slice(-4)}`)
     .replace(ACCOUNT_CTX_RE, (_m, pre, num: string) => `${pre}••••${num.replace(/\D/g, '').slice(-4)}`)
     .replace(IP_PIN_CTX_RE, (_m, pre) => `${pre}••••••`);
+}
+
+// People type SSNs and account numbers into notes and questions without labels, so
+// free text also masks anything SSN-shaped and any long digit run, keeping the last 4.
+const SSN_LIKE_RE = /\b\d{3}-?\d{2}-?(\d{4})\b/g;
+const LONG_DIGITS_RE = /\b\d{4,}(\d{4})\b/g;
+
+/** Mask typed free text (notes, replies, questions, answers) as it leaves the server; stored text stays raw. */
+export function maskFreeText(text: string): string {
+  if (typeof text !== 'string') return text;
+  return maskText(text)
+    .replace(SSN_LIKE_RE, (_m, last) => `***-**-${last}`)
+    .replace(LONG_DIGITS_RE, (_m, last) => `••••${last}`);
+}
+
+/** maskDeep for typed free text (notes, questions) in exports: also masks unlabelled SSNs and long digit runs. */
+export function maskFreeDeep(obj: unknown): unknown {
+  if (typeof obj === 'string') return maskFreeText(obj);
+  if (Array.isArray(obj)) return obj.map(maskFreeDeep);
+  if (obj && typeof obj === 'object') return Object.fromEntries(Object.entries(maskDeep(obj) as object).map(([k, v]) => [k, maskFreeDeep(v)]));
+  return obj;
 }
 
 export const SENSITIVE_VALUE_TYPES = new Set(['ssn', 'account_number']);

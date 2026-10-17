@@ -14,11 +14,18 @@ import { viewRoutes } from './routes/views';
 import { workflowRoutes } from './routes/workflow';
 
 export function App() {
-  const { actorId, isClient, actor } = useSession();
+  const { actorId, isClient, actor, notStarted } = useSession();
   return (
     <StreamProvider actorId={actorId}>
       <Shell>
-        {!actor ? null : isClient ? (
+        {!actor ? null : notStarted ? (
+          <div className="mx-auto mt-16 max-w-md rounded border border-rule bg-panel p-6 text-sm">
+            <p className="font-semibold">
+              {actor.name} starts on {actor.activeFrom}.
+            </p>
+            <p className="mt-1 text-graphite">Until then the workpaper is closed to them. Switch to someone else with the role switcher above.</p>
+          </div>
+        ) : isClient ? (
           <Routes>
             <Route path="*" element={<ClientPortal />} />
           </Routes>
@@ -37,7 +44,7 @@ export function App() {
           </Routes>
         )}
       </Shell>
-      {actor && !isClient && <TraceDrawer />}
+      {actor && !isClient && !notStarted && <TraceDrawer />}
     </StreamProvider>
   );
 }

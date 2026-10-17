@@ -27,7 +27,7 @@ import type {
 } from '@easetax/shared';
 import { assetId, diagId, lineId, nodeKind, resolveRef } from '@easetax/shared';
 import type { Workpaper } from '../workpaper.ts';
-import { assertCan } from '../policy/policy.ts';
+import { assertCan, maskFreeText } from '../policy/policy.ts';
 import { ViewCtx } from '../views/ctx.ts';
 import { outsideFilings } from '../views/completeness.ts';
 import { filedSnapshotId, filingState } from './state.ts';
@@ -224,8 +224,8 @@ export function buildRollForward(wp: Workpaper, body: { toYear?: number } = {}):
       if (set.has(x.nodeId)) out.push({ id: `variance:${x.nodeId}`, kind: 'variance_explanation', nodeId: x.nodeId, by: x.by, at: x.at, summary: short(`Change from 2024 explained: ${x.explanation}`) });
     for (const i of issues)
       if (i.status !== 'open' && hit(i.nodeIds)) out.push({ id: i.id, kind: 'issue', nodeId: i.nodeIds.find(openable), status: i.status, summary: short(`${i.title} — ${i.status}${i.resolution ? `: ${i.resolution}` : ''}`) });
-    for (const n of notes) if (hit(n.nodeIds)) out.push({ id: n.id, kind: 'note', nodeId: n.nodeIds.find(openable), status: n.status, by: n.by, at: n.at, summary: short(`Review note: ${n.thread[0]?.text ?? ''}`) });
-    for (const q of questions) if (hit(q.nodeIds)) out.push({ id: q.id, kind: 'question', nodeId: q.nodeIds.find(openable), status: q.status, by: q.by, at: q.at, summary: short(`Question to ${q.to}: ${q.thread[0]?.text ?? ''}`) });
+    for (const n of notes) if (hit(n.nodeIds)) out.push({ id: n.id, kind: 'note', nodeId: n.nodeIds.find(openable), status: n.status, by: n.by, at: n.at, summary: short(`Review note: ${maskFreeText(n.thread[0]?.text ?? '')}`) });
+    for (const q of questions) if (hit(q.nodeIds)) out.push({ id: q.id, kind: 'question', nodeId: q.nodeIds.find(openable), status: q.status, by: q.by, at: q.at, summary: short(`Question to ${q.to}: ${maskFreeText(q.thread[0]?.text ?? '')}`) });
     return out.sort((a, b) => String(a.at ?? '').localeCompare(String(b.at ?? '')));
   };
 
@@ -374,8 +374,8 @@ export function buildRollForward(wp: Workpaper, body: { toYear?: number } = {}):
     ...issues
       .filter((i) => i.status === 'open' && i.severity !== 'info')
       .map((i) => ({ kind: 'issue' as const, id: i.id, text: i.title, nodeIds: i.nodeIds.slice(0, 3), ...prov([i.id, ...i.nodeIds], issueHistory(i), i.nodeIds) })),
-    ...openQuestions.map((q) => ({ kind: 'question' as const, id: q.id, text: (after(q.at) ? '(raised after filing) ' : '') + (q.thread[0]?.text ?? ''), nodeIds: q.nodeIds, ...prov([`question:${q.id}`, ...q.nodeIds], [{ year: taxYear, label: `Asked of ${q.to} by ${q.by}`, value: q.status, nodeId: q.nodeIds.find(openable) }, opening('open')], q.nodeIds) })),
-    ...openNotes.map((n) => ({ kind: 'note' as const, id: n.id, text: (after(n.at) ? '(raised after filing) ' : '') + (n.thread[0]?.text ?? ''), nodeIds: n.nodeIds, ...prov([`note:${n.id}`, ...n.nodeIds], [{ year: taxYear, label: `Review note by ${n.by}${n.blocking ? ' (blocking)' : ''}`, value: n.status, nodeId: n.nodeIds.find(openable) }, opening('open')], n.nodeIds) })),
+    ...openQuestions.map((q) => ({ kind: 'question' as const, id: q.id, text: (after(q.at) ? '(raised after filing) ' : '') + maskFreeText(q.thread[0]?.text ?? ''), nodeIds: q.nodeIds, ...prov([`question:${q.id}`, ...q.nodeIds], [{ year: taxYear, label: `Asked of ${q.to} by ${q.by}`, value: q.status, nodeId: q.nodeIds.find(openable) }, opening('open')], q.nodeIds) })),
+    ...openNotes.map((n) => ({ kind: 'note' as const, id: n.id, text: (after(n.at) ? '(raised after filing) ' : '') + maskFreeText(n.thread[0]?.text ?? ''), nodeIds: n.nodeIds, ...prov([`note:${n.id}`, ...n.nodeIds], [{ year: taxYear, label: `Review note by ${n.by}${n.blocking ? ' (blocking)' : ''}`, value: n.status, nodeId: n.nodeIds.find(openable) }, opening('open')], n.nodeIds) })),
     ...outsideFilings(ctx)
       .filter((o) => o.status === 'open')
       .map((o) => ({ kind: 'outside_filing' as const, id: o.id, text: `${o.title}: ${o.why}`, nodeIds: o.nodeIds, ...prov(o.nodeIds, [{ year: taxYear, label: 'Outside the return, not yet addressed', value: o.status }, opening('open')]) })),

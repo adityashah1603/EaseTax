@@ -119,6 +119,8 @@ export interface FilingStatusDto {
   amendments: { id: string; baseSnapshotId: string; baseSeq: number; reason?: string; by: string; at: string }[];
   noticeCases: { caseId: string; noticeId: string; snapshotId: string; contentHash: string; by: string; at: string }[];
   filed: boolean;
+  /** Filed and no amendment opened since: value-changing work is refused. */
+  frozen: boolean;
 }
 
 export interface FrozenLine {

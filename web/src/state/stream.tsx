@@ -1,9 +1,11 @@
 // Live collaboration over SSE (D-11): committed events invalidate the query cache and
-// presence shows who else is looking at what.
+// presence shows who else is looking at what. Staff only: the server refuses clients and
+// staff who haven't started, and announces events without their contents.
 import { useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { useSession } from './session';
 
 export interface Presence {
   actor: string;
@@ -14,7 +16,6 @@ export interface LiveEvent {
   type: string;
   actor: string;
   at: string;
-  payload: unknown;
 }
 
 interface StreamState {
@@ -32,8 +33,11 @@ export function StreamProvider({ actorId, children }: { actorId: string; childre
   const loc = useLocation();
   const [params] = useSearchParams();
   const focus = params.get('node') ?? loc.pathname;
+  const { actor, notStarted } = useSession();
+  const live = actor?.kind === 'staff' && !notStarted;
 
   useEffect(() => {
+    if (!live) return;
     const connect = () => {
       const source = new EventSource(`/api/stream?actor=${encodeURIComponent(actorId)}&focus=${encodeURIComponent(focus)}`);
       source.addEventListener('hello', () => setState((s) => ({ ...s, connected: true })));
@@ -76,14 +80,15 @@ export function StreamProvider({ actorId, children }: { actorId: string; childre
     };
     // Reconnect only when the actor changes; focus is pushed separately below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actorId, qc]);
+  }, [actorId, live, qc]);
 
   useEffect(() => {
+    if (!live) return;
     const t = setTimeout(() => {
-      api('/api/presence', { method: 'POST', body: { actor: actorId, focus } }).catch(() => undefined);
+      api('/api/presence', { method: 'POST', body: { focus } }).catch(() => undefined);
     }, 400);
     return () => clearTimeout(t);
-  }, [actorId, focus]);
+  }, [actorId, focus, live]);
 
   return <Ctx.Provider value={state}>{children}</Ctx.Provider>;
 }

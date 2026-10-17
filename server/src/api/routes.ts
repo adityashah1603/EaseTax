@@ -3,13 +3,28 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { Actor, WhoAmI } from '@easetax/shared';
+import type { Actor, DispositionStatus, JudgmentKind, WhoAmI } from '@easetax/shared';
 import { estimateEffect, nodeKind, parseLineId } from '@easetax/shared';
 import type { Workpaper } from '../workpaper.ts';
-import { assertCan, clientMayCall, PolicyError } from '../policy/policy.ts';
+import { assertCan, assertStarted, clientMayCall, PolicyError } from '../policy/policy.ts';
 import { pendingJudgments } from '../judgments/pending.ts';
 
 const STATUS: Record<PolicyError['code'], number> = { forbidden: 403, policy: 422, invalid: 400, conflict: 409, not_found: 404 };
+
+const DISPOSITIONS: Record<DispositionStatus, string> = {
+  used: 'used',
+  duplicate: 'duplicate',
+  superseded: 'superseded',
+  not_relevant: 'not relevant',
+  out_of_year: 'out of year',
+  pending: 'pending',
+  outside_scope: 'outside scope',
+};
+const JUDGMENT_KINDS: Record<JudgmentKind, string> = { judgment: 'judgment', election: 'election', due_diligence: 'due diligence', penalty: 'penalty' };
+const NOTE_ACTIONS = ['reply', 'resolve', 'reopen'] as const;
+/** EventSource and plain links can't send X-Actor, so these name the actor in ?actor= instead. */
+const QUERY_ACTOR = [/^\/api\/stream$/, /^\/api\/attachments\/[^/]+\/file$/];
+const oneOf = (label: string, allowed: Record<string, string>) => `${label} must be one of: ${Object.values(allowed).join(', ')}`;
 
 export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   // No silent default: every request must say who is acting (D-09).
@@ -22,12 +37,17 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     data,
   });
 
+  const queryActor = (req: FastifyRequest): Actor => wp.actor(((req.query as { actor?: string }).actor ?? req.headers['x-actor']) as string | undefined);
+
   // Every API request names a known actor (D-09); clients reach only the portal's routes (D-35).
-  // The SSE stream identifies itself by query string and carries no workpaper data beyond event ids.
+  // The SSE stream and file links name the actor in the query string; the stream is staff-only.
+  // Staff whose start date is still ahead may only load the session, so the role switcher can say why.
   app.addHook('onRequest', async (req) => {
     const path = req.url.split('?')[0]!;
-    if (!path.startsWith('/api/') || path === '/api/stream') return;
-    const a = who(req);
+    if (!path.startsWith('/api/')) return;
+    const a = QUERY_ACTOR.some((re) => re.test(path)) ? queryActor(req) : who(req);
+    if (!(req.method === 'GET' && path === '/api/me')) assertStarted(a);
+    if (path === '/api/stream' && a.kind !== 'staff') throw new PolicyError('The live stream is for firm staff', 'forbidden');
     if (a.kind === 'client' && !clientMayCall(req.method, path)) throw new PolicyError('This is part of the firm workpaper', 'forbidden');
   });
 
@@ -114,7 +134,9 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.put('/api/documents/:id/disposition', async (req) => {
     const a = who(req);
     assertCan(a, 'disposition');
-    const body = req.body as { status: string; note?: string };
+    const body = (req.body ?? {}) as { status: DispositionStatus; note?: string };
+    if (!wp.b.docs.has((req.params as any).id)) throw new PolicyError('No such document', 'not_found');
+    if (!Object.hasOwn(DISPOSITIONS, body.status)) throw new PolicyError(oneOf('Status', DISPOSITIONS), 'invalid');
     if (!body.note?.trim() && body.status !== 'used') throw new PolicyError('Say why this document was not used', 'invalid');
     return ok(wp.commit(a, [{ type: 'disposition.set', payload: { documentId: (req.params as any).id, status: body.status, note: body.note } }]));
   });
@@ -134,10 +156,13 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     return ok(wp.commit(a, [{ type: 'attachment.added', payload: { attachmentId: id, kind: body.kind ?? 'note', name: body.name, text: body.text } }]), { id: `att:${id}` });
   });
   app.get('/api/attachments/:id/file', async (req, reply) => {
+    const a = queryActor(req);
     const f = wp.store.getAttachment((req.params as any).id);
     if (!f) throw new PolicyError('No such file', 'not_found');
+    // Opening an uploaded file lands in the access log, like an unmasked view.
+    wp.commit(a, [{ type: 'attachment.opened', payload: { attachmentId: (req.params as any).id, name: f.name } }]);
     reply.header('content-type', f.mime ?? 'application/octet-stream');
-    reply.header('content-disposition', `inline; filename="${f.name}"`);
+    reply.header('content-disposition', `inline; filename="${f.name.replace(/["\r\n]/g, '_')}"`);
     return Buffer.from(f.data);
   });
   app.post('/api/nodes/:id/evidence', async (req) => {
@@ -166,7 +191,13 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.delete('/api/verifications/:id', async (req) => {
     const a = who(req);
     assertCan(a, 'verify');
-    return ok(wp.commit(a, [{ type: 'verification.removed', payload: { verificationId: (req.params as any).id } }]));
+    const v = wp.state.verifications.get((req.params as any).id);
+    if (!v) throw new PolicyError('No such verification', 'not_found');
+    // Only the person who verified, or a reviewer or partner, takes a verification away, and says why.
+    if (v.by !== a.id && a.role !== 'reviewer' && a.role !== 'partner') throw new PolicyError('Only the person who verified this, a reviewer or a partner can remove it', 'forbidden');
+    const reason = String((req.body as { reason?: string } | undefined)?.reason ?? (req.query as { reason?: string }).reason ?? '').trim();
+    if (!reason) throw new PolicyError('Say why the verification is being removed', 'invalid');
+    return ok(wp.commit(a, [{ type: 'verification.removed', payload: { verificationId: v.id }, reason }]));
   });
   app.post('/api/adjustments', async (req) => {
     const b = req.body as { nodeId: string; newValue: unknown; reason: string; authority?: string; revision?: number };
@@ -242,7 +273,8 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.post('/api/judgments', async (req) => {
     const a = who(req);
     assertCan(a, 'judgment');
-    const b = req.body as { kind: any; topic: string; decision: string; alternatives?: string[]; authority: string; nodeIds?: string[]; issueIds?: string[] };
+    const b = (req.body ?? {}) as { kind: JudgmentKind; topic: string; decision: string; alternatives?: string[]; authority: string; nodeIds?: string[]; issueIds?: string[] };
+    if (!Object.hasOwn(JUDGMENT_KINDS, b.kind)) throw new PolicyError(oneOf('Kind', JUDGMENT_KINDS), 'invalid');
     if (!b.authority?.trim()) throw new PolicyError('Every judgment call records the authority relied on.', 'policy', 'Every judgment call records the authority relied on.');
     const known = new Set(wp.issues().map((i) => i.id));
     const unknown = (b.issueIds ?? []).filter((id) => !known.has(id));
@@ -267,8 +299,11 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.post('/api/variances/explain', async (req) => {
     const a = who(req);
     assertCan(a, 'verify');
-    const b = req.body as { nodeId: string; explanation: string };
-    return ok(wp.commit(a, [{ type: 'variance.explained', payload: b }]));
+    const b = (req.body ?? {}) as { nodeId: string; explanation: string };
+    if (typeof b.nodeId !== 'string') throw new PolicyError('Say which line the explanation is for', 'invalid');
+    if (!wp.g.nodes.has(b.nodeId)) throw new PolicyError(`Unknown line ${b.nodeId}`, 'not_found');
+    if (typeof b.explanation !== 'string' || !b.explanation.trim()) throw new PolicyError('Explain the variance in a sentence', 'invalid');
+    return ok(wp.commit(a, [{ type: 'variance.explained', payload: { nodeId: b.nodeId, explanation: b.explanation.trim() } }]));
   });
 
   // ------------------------------------------------------------ people & workflow
@@ -278,11 +313,12 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     const b = req.body as { nodeIds: string[]; text: string; blocking?: boolean };
     return ok(wp.commit(a, [{ type: 'note.created', payload: { noteId: randomUUID(), nodeIds: b.nodeIds, text: b.text, blocking: !!b.blocking } }]));
   });
-  app.get('/api/notes', async () => [...wp.state.notes.values()]);
+  app.get('/api/notes', async () => [...wp.state.notes.values()].map((n) => wp.publicNote(n)));
   app.post('/api/notes/:id/:action', async (req) => {
     const a = who(req);
     assertCan(a, 'note');
-    const { id, action } = req.params as { id: string; action: 'reply' | 'resolve' | 'reopen' };
+    const { id, action } = req.params as { id: string; action: (typeof NOTE_ACTIONS)[number] };
+    if (!NOTE_ACTIONS.includes(action)) throw new PolicyError(`Unknown note action "${action}": use reply, resolve or reopen`, 'invalid');
     const note = wp.state.notes.get(id);
     if (!note) throw new PolicyError('No such note', 'not_found');
     if (action === 'reply') return ok(wp.commit(a, [{ type: 'note.replied', payload: { noteId: id, text: (req.body as any).text } }]));
@@ -302,7 +338,7 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.get('/api/questions', async (req) => {
     const a = who(req);
     const all = [...wp.state.questions.values()];
-    return a.kind === 'client' ? all.filter((q) => q.to === 'client') : all;
+    return (a.kind === 'client' ? all.filter((q) => q.to === 'client') : all).map((q) => wp.publicQuestion(q));
   });
   app.post('/api/questions/:id/answer', async (req) => {
     const a = who(req);
@@ -364,7 +400,7 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.get('/api/changes/since-last-seen', async (req) => {
     const a = who(req);
     const since = wp.state.lastSeen.get(a.id) ?? 0;
-    return { since, events: wp.state.events.filter((e) => e.seq > since && e.actor !== a.id && e.type !== 'seen.marked' && e.type !== 'notification.read').map((e) => wp.publicEvent(e)) };
+    return { since, events: wp.state.events.filter((e) => e.seq > since && e.actor !== a.id && !QUIET_EVENTS.has(e.type)).map((e) => wp.publicEvent(e)) };
   });
   app.post('/api/changes/mark-seen', async (req) => {
     const a = who(req);
@@ -392,7 +428,11 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
   app.get('/api/firm/access-log', async (req) => {
     const a = who(req);
     assertCan(a, 'standards');
-    return wp.state.accessLog;
+    // Unmasked views, plus every opened uploaded file (field "file").
+    const opened = wp.state.events
+      .filter((e) => e.type === 'attachment.opened')
+      .map((e) => ({ actor: e.actor, nodeId: `att:${(e.payload as { attachmentId: string }).attachmentId}`, field: 'file', reason: undefined as string | undefined, at: e.at }));
+    return [...wp.state.accessLog, ...opened].sort((x, y) => x.at.localeCompare(y.at));
   });
   app.get('/api/firm/standards', async () => wp.standards());
   app.put('/api/firm/standards', async (req) => {
@@ -401,6 +441,9 @@ export function registerRoutes(app: FastifyInstance, wp: Workpaper) {
     return ok(wp.commit(a, [{ type: 'firm.standards_updated', payload: { standards: req.body } }]));
   });
 }
+
+/** Bookkeeping kept out of "since I last looked". */
+const QUIET_EVENTS = new Set<string>(['seen.marked', 'notification.read', 'attachment.opened']);
 
 function unmaskedField(wp: Workpaper, nodeId: string, field: string): unknown {
   const kind = nodeKind(nodeId);

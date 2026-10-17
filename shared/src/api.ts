@@ -186,6 +186,8 @@ export interface SignoffDto {
   status: 'valid' | 'reopened' | 'withdrawn';
   reopenedBySeq?: number;
   changedNodeIds?: string[];
+  /** Why it reopened when not a plain value change (e.g. an undo, a removed verification). */
+  reopenedReason?: string;
 }
 
 export interface JudgmentDto {

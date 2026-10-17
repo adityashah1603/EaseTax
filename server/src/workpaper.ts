@@ -11,7 +11,9 @@ import type {
   HouseholdCorrectionDto,
   IssueDto,
   PacketPerson,
+  QuestionDto,
   ReadCorrectionDto,
+  ReviewNoteDto,
   LineRow,
   MyActionDto,
   NodeDetail,
@@ -31,19 +33,30 @@ import { WorkState } from './state/state.ts';
 import { runChecks, type CheckContext } from './checks/index.ts';
 import { relatedConsistency } from './checks/related.ts';
 import { relatedReturns } from './baseline/related.ts';
-import { assertCan, canSignLevel, maskDeep, maskText, maskValue, PolicyError, RULES, SENSITIVE_VALUE_TYPES, actorsFrom } from './policy/policy.ts';
+import { assertCan, canSignLevel, maskDeep, maskFreeText, maskText, maskValue, PolicyError, RULES, SENSITIVE_VALUE_TYPES, actorsFrom } from './policy/policy.ts';
+import { FROZEN_MESSAGE, returnFrozen } from './filing/state.ts';
 
 export type Listener = (events: WorkEvent[]) => void;
 
 /** D-65: actions that stay on the record; Undo would hide them. */
 const NOT_UNDOABLE: Partial<Record<WorkEvent['type'], string>> = {
   'sensitive.unmasked': 'viewing a sensitive field stays in the access log.',
+  'attachment.opened': 'opening an uploaded file stays in the access log.',
   'filing.step': 'filing steps are records of what was sent and received; record a fix or open an amendment instead.',
   'events.undone': 'an undo is itself kept in the history.',
   'signoff.reopened': 'the system reopened this sign-off because its content changed.',
 };
+/** Freeze after filing: changes to the return's content or its proof, refused until an amendment opens. */
+const FROZEN_TYPES = new Set<WorkEvent['type']>([
+  'verification.added', 'verification.removed',
+  'adjustment.proposed', 'adjustment.approved', 'adjustment.rejected', 'adjustment.reverted',
+  'read.corrected', 'read.correction_reverted', 'household.corrected', 'household.correction_reverted',
+  'issue.resolved', 'issue.reopened', 'issue.closure_confirmed',
+  'judgment.recorded', 'disposition.set', 'area.considered', 'variance.explained', 'reconciliation.explained',
+  'signoff.recorded', 'signoff.withdrawn',
+]);
 /** Bookkeeping events that aren't actions a person would want to take back. */
-const HIDDEN_FROM_MY_ACTIONS = new Set<WorkEvent['type']>(['seen.marked', 'notification.read', 'events.undone']);
+const HIDDEN_FROM_MY_ACTIONS = new Set<WorkEvent['type']>(['seen.marked', 'notification.read', 'events.undone', 'attachment.opened']);
 
 export class Workpaper {
   readonly g: Graph;
@@ -59,6 +72,7 @@ export class Workpaper {
   ) {
     this.g = buildGraph(b);
     this.state = new WorkState(this.g);
+    this.state.afterRebuild = () => this.reconcileSignoffs();
     this.state.rebuild(store.all());
     this.actors = actorsFrom(b);
   }
@@ -81,12 +95,21 @@ export class Workpaper {
   // ---------------------------------------------------------------- writes
 
   commit(actor: Actor, inputs: Omit<AppendInput, 'actor' | 'role'>[]): WorkEvent[] {
+    this.assertNotFrozen(inputs);
     const events = this.store.append(inputs.map((i) => ({ ...i, actor: actor.id, role: actor.role })));
     if (events.some((e) => e.type === 'events.undone')) this.state.rebuild(this.store.all());
     else for (const e of events) this.state.apply(e);
     this.issuesCache = null;
     for (const l of this.listeners) l(events);
     return events;
+  }
+
+  /** Freeze after filing: refuse value-changing work, and undoing it, until an amendment opens. */
+  private assertNotFrozen(inputs: Omit<AppendInput, 'actor' | 'role'>[]) {
+    if (!returnFrozen(this.state.filingSteps)) return;
+    const undone = new Set(inputs.flatMap((i) => (i.type === 'events.undone' ? (i.payload as { eventIds: string[] }).eventIds : [])));
+    const hit = inputs.some((i) => FROZEN_TYPES.has(i.type)) || this.state.events.some((e) => undone.has(e.id) && FROZEN_TYPES.has(e.type));
+    if (hit) throw new PolicyError(FROZEN_MESSAGE, 'conflict', FROZEN_MESSAGE);
   }
 
   // ---------------------------------------------------------------- values
@@ -360,13 +383,13 @@ export class Workpaper {
     if (id.startsWith('note:')) {
       const n = this.state.notes.get(id.slice(5));
       s.kind = 'note';
-      s.label = n ? n.thread[0]!.text : id;
+      s.label = n ? maskFreeText(n.thread[0]!.text) : id;
       s.sublabel = n ? `${n.blocking ? 'Blocking review note' : 'Review note'} · ${n.status}` : undefined;
     }
     if (id.startsWith('question:')) {
       const q = this.state.questions.get(id.slice(9));
       s.kind = 'question';
-      s.label = q ? q.thread[0]!.text : id;
+      s.label = q ? maskFreeText(q.thread[0]!.text) : id;
       s.sublabel = q ? `Question to ${q.to}` : undefined;
     }
     return s;
@@ -413,9 +436,9 @@ export class Workpaper {
         ? [...this.state.householdCorrections.values()].filter((c) => c.personId === id.slice(10)).map((c) => this.maskHousehold(c))
         : [],
       issues: this.issuesFor(id),
-      notes: [...this.state.notes.values()].filter((n) => n.nodeIds.includes(id)),
-      questions: [...this.state.questions.values()].filter((q) => q.nodeIds.includes(id)),
-      evidence: this.state.evidence.filter((e) => e.nodeId === id).map((e) => ({ id: e.id, node: this.summarize(e.evidenceId), note: e.note, by: e.by, at: e.at })),
+      notes: [...this.state.notes.values()].filter((n) => n.nodeIds.includes(id)).map((n) => this.publicNote(n)),
+      questions: [...this.state.questions.values()].filter((q) => q.nodeIds.includes(id)).map((q) => this.publicQuestion(q)),
+      evidence: this.state.evidence.filter((e) => e.nodeId === id).map((e) => ({ id: e.id, node: this.summarize(e.evidenceId), note: e.note && maskFreeText(e.note), by: e.by, at: e.at })),
       links: this.state.links
         .filter((l) => l.from === id || l.to === id)
         .map((l) => ({ id: l.id, other: this.summarize(l.from === id ? l.to : l.from), linkType: l.linkType, note: l.note })),
@@ -690,8 +713,10 @@ export class Workpaper {
     const current = this.lineValue(p.key);
     const v = this.b.version(this.version)!;
     const effect = estimateEffect(p.key, current, newValue, v.tax_effect_rates, this.version);
-    // D-20: a partner's own adjustment carries their sign-off.
-    const requiresPartner = effectMagnitude(effect) > 1000 && actor.role !== 'partner';
+    // D-20: a partner's own adjustment carries their sign-off. The threshold is also measured
+    // against the engine's value, so splitting a change into small steps can't dodge it.
+    const cumulative = estimateEffect(p.key, line.value, newValue, v.tax_effect_rates, this.version);
+    const requiresPartner = Math.max(effectMagnitude(effect), effectMagnitude(cumulative)) > 1000 && actor.role !== 'partner';
     return this.commit(actor, [
       {
         type: 'adjustment.proposed',
@@ -707,6 +732,7 @@ export class Workpaper {
     if (decision === 'revert') {
       assertCan(actor, 'adjust');
       if (adj.status !== 'approved') throw new PolicyError('Only an adjustment in force can be reverted', 'conflict');
+      if (this.revertNeedsPartner(adj)) assertCan(actor, 'approve_adjustment');
       return this.commit(actor, [{ type: 'adjustment.reverted', payload: { adjustmentId }, reason: note }]);
     }
     assertCan(actor, 'approve_adjustment');
@@ -715,20 +741,29 @@ export class Workpaper {
     return this.commit(actor, [{ type: decision === 'approve' ? 'adjustment.approved' : 'adjustment.rejected', payload: { adjustmentId, note }, reason: note }]);
   }
 
+  /** D-20: taking back an adjustment over the threshold (or one that needed a partner) needs a partner too. */
+  private revertNeedsPartner(adj: { nodeId: string; newValue: unknown; originalValue: unknown; requiresPartner: boolean }) {
+    if (adj.requiresPartner) return true;
+    const p = parseLineId(adj.nodeId);
+    const v = p && this.b.version(p.version);
+    if (!p || !v) return false;
+    return effectMagnitude(estimateEffect(p.key, adj.newValue, adj.originalValue, v.tax_effect_rates, p.version)) > 1000;
+  }
+
   signoff(actor: Actor, scope: string, level: SignoffLevel) {
     assertCan(actor, 'signoff');
     if (!canSignLevel(actor.role, level)) throw new PolicyError(`${actor.role} cannot sign at ${level} level`, 'forbidden');
     const lines = this.scopeLines(scope);
     if (level !== 'preparer') {
-      // No self-review: the signer must not have prepared (verified or adjusted) anything in scope.
+      // No self-review: the signer must not have prepared (verified, adjusted or corrected) anything in scope.
       const ids = new Set(lines.map((l) => l.id));
-      const prepared = this.state.events.some(
-        (e) =>
-          e.actor === actor.id &&
-          !this.state.undone.has(e.id) &&
-          (e.type === 'verification.added' || e.type === 'adjustment.proposed') &&
-          ids.has((e.payload as any).nodeId),
-      );
+      const prepared = this.state.events.some((e) => {
+        if (e.actor !== actor.id || this.state.undone.has(e.id)) return false;
+        if (e.type === 'verification.added' || e.type === 'adjustment.proposed') return ids.has((e.payload as any).nodeId);
+        // A corrected read or household record is preparation of every line it feeds.
+        const fed = this.correctedNode(e);
+        return !!fed && this.state.inScope(scope, [fed]);
+      });
       if (prepared) throw new PolicyError(RULES.noSelfReview, 'policy', RULES.noSelfReview);
     }
     const scopeHash = this.scopeHash(scope);
@@ -741,10 +776,86 @@ export class Workpaper {
     throw new PolicyError(`Unknown scope ${scope}`, 'invalid');
   }
 
-  scopeHash(scope: string): string {
+  /** The node a read or household correction (or its revert) changed, if `e` is one. */
+  private correctedNode(e: WorkEvent): string | undefined {
+    const p = e.payload as any;
+    switch (e.type) {
+      case 'read.corrected':
+        return `ev:${p.evId}`;
+      case 'household.corrected':
+        return `household:${p.personId}`;
+      case 'read.correction_reverted': {
+        const c = this.state.corrections.get(p.correctionId);
+        return c && `ev:${c.evId}`;
+      }
+      case 'household.correction_reverted': {
+        const c = this.state.householdCorrections.get(p.correctionId);
+        return c && `household:${c.personId}`;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * What a sign-off covers (design §7.3): each line's effective value and description, the read
+   * and household corrections in force that feed the scope, and the verifications on it. `asOf`
+   * limits verifications to those made before that seq, so later ones don't move an earlier hash.
+   */
+  scopeHash(scope: string, asOf = Infinity): string {
+    const area = scope === 'return' ? undefined : scope.startsWith('area:') ? scope.slice(5) : null;
+    if (area === null) throw new PolicyError(`Unknown scope ${scope}`, 'invalid');
+    const s = this.state;
+    const h = createHash('sha256');
+    const lines = this.b.version(this.version)!.lines.filter((l) => !area || areaOfKey(l.key) === area).sort((a, b) => a.key.localeCompare(b.key));
+    for (const l of lines) {
+      const adj = s.effectiveAdjustment(lineId(this.version, l.key));
+      h.update(`${l.key}=${JSON.stringify(adj ? adj.newValue : l.value)}|${this.lineLabel(this.version, l)}\n`);
+    }
+    const corr = [...s.activeCorrection].map(([ev, id]) => [`ev:${ev}`, id] as const);
+    const hh = [...s.activeHousehold].map(([k, id]) => [`household:${k.split('.')[0]}`, id] as const);
+    for (const [node, id] of [...corr, ...hh].sort((a, b) => a[1].localeCompare(b[1]))) if (s.inScope(scope, [node])) h.update(`corr:${id}\n`);
+    for (const v of [...s.verifications.values()].sort((a, b) => a.id.localeCompare(b.id))) if (v.seq < asOf && s.inScope(scope, [v.nodeId])) h.update(`ver:${v.id}\n`);
+    return `v2:${h.digest('hex')}`;
+  }
+
+  /** Compare a stored scope hash; hashes from before v2 covered line values only. */
+  scopeHashMatches(scope: string, stored: string, asOf = Infinity): boolean {
+    if (stored.startsWith('v2:')) return stored === this.scopeHash(scope, asOf);
     const h = createHash('sha256');
     for (const l of this.scopeLines(scope).sort((a, b) => a.key.localeCompare(b.key))) h.update(`${l.key}=${JSON.stringify(l.effectiveValue)}\n`);
-    return h.digest('hex');
+    return stored === h.digest('hex');
+  }
+
+  /**
+   * After a rebuild (an undo): a sign-off whose scope no longer hashes to what was signed is
+   * reopened. Live changes reopen sign-offs as they happen; an undo rewrites history instead.
+   */
+  private reconcileSignoffs() {
+    this.issuesCache = null;
+    const s = this.state;
+    for (const so of s.signoffs.values()) {
+      if (so.status !== 'valid' || this.scopeHashMatches(so.scope, so.scopeHash, so.seq)) continue;
+      // The undos after the sign-off that took back something done before it.
+      const taken = s.events.filter((e) => e.seq < so.seq && (s.undoneAt.get(e.id) ?? 0) > so.seq);
+      const bySeq = Math.max(so.seq, ...taken.map((e) => s.undoneAt.get(e.id)!));
+      const changed = [...new Set(taken.flatMap((e) => this.changedNodesOf(e)))];
+      s.reopen(so, bySeq, changed, 'Content changed since sign-off (undo).');
+    }
+  }
+
+  /** Nodes an event changed, for a reopened sign-off's list. */
+  private changedNodesOf(e: WorkEvent): string[] {
+    const p = e.payload as any;
+    const fed = this.correctedNode(e);
+    if (fed) return [fed];
+    if (typeof p?.nodeId === 'string') return [p.nodeId];
+    const a = p?.adjustmentId && this.state.adjustments.get(p.adjustmentId);
+    if (a) return [a.nodeId];
+    if (p?.verificationId) {
+      const added = this.state.events.find((x) => x.type === 'verification.added' && (x.payload as any).verificationId === p.verificationId);
+      return added ? [(added.payload as any).nodeId] : [];
+    }
+    return [];
   }
 
   undo(actor: Actor, target: { batchId?: string; eventId?: string }) {
@@ -756,6 +867,11 @@ export class Workpaper {
     if (ids.some((e) => e.actor !== actor.id)) throw new PolicyError('You can only undo your own actions', 'forbidden');
     const kept = ids.find((e) => NOT_UNDOABLE[e.type]);
     if (kept) throw new PolicyError(`This can't be undone: ${NOT_UNDOABLE[kept.type]}`, 'conflict');
+    // D-20: undoing an adjustment in force is a revert, and needs a partner the same way.
+    for (const e of ids) {
+      const adj = e.type === 'adjustment.proposed' ? this.state.adjustments.get((e.payload as any).adjustmentId) : undefined;
+      if (adj && adj.status === 'approved' && this.revertNeedsPartner(adj)) assertCan(actor, 'approve_adjustment');
+    }
     return this.commit(actor, [{ type: 'events.undone', payload: { eventIds: ids.map((e) => e.id) } }]);
   }
 
@@ -855,6 +971,10 @@ export class Workpaper {
 
   /** An event as it may leave the server: corrected SSNs and account numbers stay masked (D-10). */
   publicEvent(e: WorkEvent): WorkEvent {
+    if (FREE_TEXT_EVENTS.has(e.type)) {
+      const p = e.payload as { text: string };
+      return { ...e, payload: { ...p, text: maskFreeText(p.text) } } as WorkEvent;
+    }
     if (e.type === 'household.corrected') {
       const p = e.payload as WorkEvent<'household.corrected'>['payload'];
       if (!HOUSEHOLD_SENSITIVE.has(p.field)) return e;
@@ -864,6 +984,15 @@ export class Workpaper {
     const p = e.payload as WorkEvent<'read.corrected'>['payload'];
     if (!SENSITIVE_VALUE_TYPES.has(p.valueType)) return e;
     return { ...e, payload: { ...p, originalValue: maskValue(p.originalValue), correctedValue: maskValue(p.correctedValue) } } as WorkEvent;
+  }
+
+  /** Notes and questions as they leave the server: SSN- and account-shaped text masked (D-10); stored text stays raw. */
+  publicNote(n: ReviewNoteDto): ReviewNoteDto {
+    return { ...n, thread: n.thread.map((t) => ({ ...t, text: maskFreeText(t.text) })) };
+  }
+
+  publicQuestion(q: QuestionDto): QuestionDto {
+    return { ...q, thread: q.thread.map((t) => ({ ...t, text: maskFreeText(t.text) })) };
   }
 
   correctRead(actor: Actor, evNodeId: string, rawValue: unknown, reason: string, revision?: number) {
@@ -999,6 +1128,8 @@ const REVISING = /^(adjustment\.|read\.|household\.|verification\.)/;
 /** Household fields a preparer may correct (with the client's confirmation), and which are sensitive. */
 const HOUSEHOLD_FIELDS = ['ssn', 'name', 'dob'] as const;
 const HOUSEHOLD_SENSITIVE = new Set<string>(['ssn']);
+/** Events whose payload.text is typed free text, masked on the way out (D-10). */
+const FREE_TEXT_EVENTS = new Set<WorkEvent['type']>(['note.created', 'note.replied', 'question.asked', 'question.answered']);
 
 /** Parse a corrected read into its value type, rejecting values that can't be that type. */
 function coerceRead(type: string, v: unknown): unknown {

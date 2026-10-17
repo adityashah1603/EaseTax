@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import type { Actor, FrozenLine } from '@easetax/shared';
 import { parseLineId, parsePageId } from '@easetax/shared';
 import type { Workpaper } from '../workpaper.ts';
-import { assertCan, maskDeep, maskText, maskValue, PolicyError, SENSITIVE_VALUE_TYPES } from '../policy/policy.ts';
+import { assertCan, maskDeep, maskFreeDeep, maskText, maskValue, PolicyError, SENSITIVE_VALUE_TYPES } from '../policy/policy.ts';
 import { filedSnapshotId, filingState } from './state.ts';
 import { loadSnapshot, putFrozen, type FilingSnapshotContent } from './snapshot.ts';
 
@@ -129,8 +129,8 @@ export function buildNoticeCase(wp: Workpaper, actor: Actor, noticeId: string, b
         verifications: pick(s.state.verifications, (v) => nodes.has(v.nodeId)),
         adjustments: pick(s.state.adjustments, (a) => nodes.has(a.nodeId)),
         judgments: pick(s.state.judgments, (j) => inScope(j.nodeIds ?? [])),
-        notes: maskDeep(pick(s.state.notes, (n) => inScope(n.nodeIds ?? []))),
-        questions: maskDeep(pick(s.state.questions, (q) => inScope(q.nodeIds ?? []))),
+        notes: maskFreeDeep(pick(s.state.notes, (n) => inScope(n.nodeIds ?? []))),
+        questions: maskFreeDeep(pick(s.state.questions, (q) => inScope(q.nodeIds ?? []))),
         evidence: pick(s.state.evidence, (e) => nodes.has(e.nodeId)),
         issues: pick(s.state.issues, (i) => inScope(i.nodeIds ?? [])),
         varianceExplanations: pick(s.state.varianceExplanations, (v) => nodes.has(v.nodeId)),

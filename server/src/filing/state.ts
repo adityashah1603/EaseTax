@@ -8,6 +8,7 @@ import type { Workpaper } from '../workpaper.ts';
 export function filingState(wp: Workpaper): FilingStatusDto {
   let extension: FilingStatusDto['extension'] = null;
   let approval: (Omit<NonNullable<FilingStatusDto['clientApproval']>, 'current'>) | null = null;
+  let approvalSeq = 0;
   const subs = new Map<string, SubmissionDto>();
   const amendments: FilingStatusDto['amendments'] = [];
   const noticeCases: FilingStatusDto['noticeCases'] = [];
@@ -19,6 +20,7 @@ export function filingState(wp: Workpaper): FilingStatusDto {
         break;
       case 'client_approval':
         approval = { by: s.by, at: s.at, pins: d.pinsMasked ?? {}, returnHash: d.returnHash };
+        approvalSeq = s.seq;
         break;
       case 'submitted':
         for (const x of d.submissions ?? [])
@@ -42,7 +44,7 @@ export function filingState(wp: Workpaper): FilingStatusDto {
   return {
     extension,
     // Current only while the return is unchanged AND the partner's sign-off still stands (D-48).
-    clientApproval: approval ? { ...approval, current: approval.returnHash === wp.scopeHash('return') && partnerSignedReturn(wp) } : null,
+    clientApproval: approval ? { ...approval, current: wp.scopeHashMatches('return', approval.returnHash, approvalSeq) && partnerSignedReturn(wp) } : null,
     approvalOpen: partnerSignedReturn(wp)
       ? { open: true }
       : { open: false, reason: "Your preparer's partner hasn't signed off the return yet. You can approve it once they have." },
@@ -51,8 +53,26 @@ export function filingState(wp: Workpaper): FilingStatusDto {
     amendments,
     noticeCases,
     filed: accepted('federal') && accepted('california'),
+    frozen: returnFrozen(wp.state.filingSteps),
   };
 }
+
+/**
+ * Freeze after filing: once an agency has accepted the return, value-changing work is refused
+ * until an amendment is opened (design §5.6 amendment layer). A rejection doesn't freeze it.
+ */
+export function returnFrozen(steps: { step: string; data?: unknown; seq: number }[]): boolean {
+  let accepted = 0;
+  let amended = 0;
+  for (const s of steps) {
+    const d = (s.data ?? {}) as any;
+    if (s.step === 'submission_result' && d.status === 'accepted') accepted = s.seq;
+    if (s.step === 'amendment_opened') amended = s.seq;
+  }
+  return accepted > 0 && amended < accepted;
+}
+
+export const FROZEN_MESSAGE = 'The return is filed. Open an amendment to change it.';
 
 /** True while a partner sign-off on the whole return is valid (not reopened or withdrawn). */
 export function partnerSignedReturn(wp: Workpaper): boolean {

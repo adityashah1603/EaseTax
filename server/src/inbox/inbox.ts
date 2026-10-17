@@ -9,7 +9,7 @@ import type { Actor, InboxDto, InboxItemDto, InboxKind, WorkEvent } from '@easet
 import { parseLineId } from '@easetax/shared';
 import type { Workpaper } from '../workpaper.ts';
 import { AREAS, areaOfKey } from '../baseline/areas.ts';
-import { maskText } from '../policy/policy.ts';
+import { maskFreeText, maskText } from '../policy/policy.ts';
 import { filingState } from '../filing/state.ts';
 
 /** What a client user may be told about (D-35): never notes, adjustments or sign-off internals. */
@@ -197,7 +197,7 @@ export function inboxFor(wp: Workpaper, me: Actor, readIds: ReadonlySet<string> 
     .map((i) => ({
       ...i,
       title: maskText(i.title),
-      detail: i.detail ? maskText(String(i.detail)) : undefined,
+      detail: i.detail ? maskFreeText(String(i.detail)) : undefined,
       nodeIds: isClient ? [] : i.nodeIds,
       read: readIds.has(i.id),
     }))

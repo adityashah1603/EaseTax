@@ -127,6 +127,9 @@ export function AmendmentsPanel({ st }: { st: FilingStatusDto }) {
   const drawer = useDrawer();
   return (
     <Panel title="Amendments" sub="An amendment layers later changes on top of a frozen snapshot. Its diff is the current effective return against what was filed.">
+      {st.frozen && (
+        <p className="mb-3 text-sm font-semibold text-pencil-ink">The return is filed. Adjustments, corrections, verifications and sign-offs are locked until you open an amendment.</p>
+      )}
       {filingSnaps.length === 0 ? (
         <p className="text-sm text-faint">Nothing filed yet: there is no snapshot to amend.</p>
       ) : (
@@ -160,7 +163,7 @@ export function AmendmentsPanel({ st }: { st: FilingStatusDto }) {
           </Field>
           <div className="mb-3">
             <button className="btn-primary" disabled={!gate.allowed || !reason.trim() || act.busy === 'amend'} title={gate.why}>
-              Open amendment
+              Open an amendment
             </button>
           </div>
         </form>

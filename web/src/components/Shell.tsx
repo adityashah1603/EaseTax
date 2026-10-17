@@ -8,7 +8,7 @@ import { useSearch, useSummary } from '../api/hooks';
 import { useHotkeys } from '../lib/hotkeys';
 import { fmtValue } from '../lib/format';
 import { useDrawer } from '../state/drawer';
-import { ROLE_LABEL, useSession } from '../state/session';
+import { ROLE_LABEL, startsLater, useSession } from '../state/session';
 import { useStream } from '../state/stream';
 import { viewNav } from '../routes/views';
 import { workflowHeaderWidgets, workflowNav } from '../routes/workflow';
@@ -133,7 +133,7 @@ function RoleSwitcher() {
                   <span className="block text-2xs text-graphite">
                     {ROLE_LABEL[a.role]}
                     {a.kind === 'staff' && !a.clearance && ' · no clearance'}
-                    {a.activeFrom && a.activeFrom > new Date().toISOString().slice(0, 10) && ` · starts ${a.activeFrom}`}
+                    {startsLater(a) && ` · starts ${a.activeFrom}, no access yet`}
                   </span>
                   {a.note && <span className="block text-2xs text-faint">{a.note}</span>}
                 </span>

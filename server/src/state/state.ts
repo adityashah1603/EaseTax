@@ -58,7 +58,11 @@ export class WorkState {
   areaConsidered = new Map<string, Stamped & { note?: string }>();
   varianceExplanations = new Map<string, Stamped & { explanation: string }>();
   reconciliations = new Map<string, Stamped & { explanation: string; status: string }>();
-  signoffs = new Map<string, SignoffDto & { scopeHash: string }>();
+  signoffs = new Map<string, SignoffDto & { scopeHash: string; seq: number }>();
+  /** event id -> seq of the undo that took it back */
+  undoneAt = new Map<string, number>();
+  /** Set by the workpaper: re-checks sign-offs against their scope hash after a rebuild. */
+  afterRebuild?: () => void;
   assignments = new Map<string, { id: string; scope: string; assignee: string; due?: string; text: string; done: boolean } & Stamped>();
   time: { actor: string; area: string; hours: number; note?: string; at: string }[] = [];
   accessLog: { actor: string; nodeId: string; field: string; reason?: string; at: string }[] = [];
@@ -77,10 +81,17 @@ export class WorkState {
     const fresh = new WorkState(this.graph);
     // Collect undo targets first so replay skips them deterministically.
     for (const e of events) {
-      if (e.type === 'events.undone') for (const id of (e.payload as { eventIds: string[] }).eventIds) fresh.undone.add(id);
+      if (e.type === 'events.undone')
+        for (const id of (e.payload as { eventIds: string[] }).eventIds) {
+          fresh.undone.add(id);
+          fresh.undoneAt.set(id, e.seq);
+        }
     }
     for (const e of events) fresh.apply(e);
+    const hook = this.afterRebuild;
     Object.assign(this, fresh);
+    this.afterRebuild = hook;
+    hook?.();
   }
 
   apply(e: WorkEvent) {
@@ -100,6 +111,8 @@ export class WorkState {
         if (v) {
           this.verifications.delete(p.verificationId);
           this.touch(v.nodeId, e);
+          // The scope hash covers verification state: sign-offs made while it stood reopen.
+          this.reopenSignoffs([v.nodeId], e, { before: v.seq, reason: 'A verification in scope was removed since sign-off.' });
         }
         break;
       }
@@ -300,7 +313,7 @@ export class WorkState {
         for (const s of this.signoffs.values()) {
           if (s.scope === p.scope && s.level === p.level && s.status === 'valid') s.status = 'withdrawn';
         }
-        this.signoffs.set(p.signoffId, { id: p.signoffId, scope: p.scope, level: p.level, scopeHash: p.scopeHash, status: 'valid', ...stamp });
+        this.signoffs.set(p.signoffId, { id: p.signoffId, scope: p.scope, level: p.level, scopeHash: p.scopeHash, status: 'valid', seq: e.seq, ...stamp });
         break;
       case 'signoff.withdrawn': {
         const s = this.signoffs.get(p.signoffId);
@@ -356,23 +369,36 @@ export class WorkState {
    * A value changed: reopen every valid sign-off whose scope contains the node or any
    * line that depends on it (D-04 / design §7.3).
    */
-  private reopenSignoffs(changed: string[], e: WorkEvent) {
-    const affected = new Set<string>(changed);
-    for (const c of changed) for (const d of this.graph.dependents(c, (id) => id.startsWith('line:'))) affected.add(d);
-    const areas = new Set<string>();
-    for (const id of affected) {
-      const l = parseLineId(id);
-      if (l) areas.add(areaOfKey(l.key));
-    }
+  private reopenSignoffs(changed: string[], e: WorkEvent, opts: { before?: number; reason?: string } = {}) {
     for (const s of this.signoffs.values()) {
       if (s.status !== 'valid') continue;
-      const hit = s.scope === 'return' || (s.scope.startsWith('area:') && areas.has(s.scope.slice(5)));
-      if (hit) {
-        s.status = 'reopened';
-        s.reopenedBySeq = e.seq;
-        s.changedNodeIds = changed;
+      // `before`: only sign-offs recorded after that seq (e.g. after the removed verification).
+      if (opts.before !== undefined && s.seq < opts.before) continue;
+      if (this.inScope(s.scope, changed)) this.reopen(s, e.seq, changed, opts.reason);
+    }
+  }
+
+  reopen(s: SignoffDto, bySeq: number, changed: string[], reason?: string) {
+    s.status = 'reopened';
+    s.reopenedBySeq = bySeq;
+    s.changedNodeIds = changed;
+    if (reason) s.reopenedReason = reason;
+  }
+
+  /** Whether a change to any of `nodeIds` touches a scope: the node or a line that depends on it (§7.3). */
+  inScope(scope: string, nodeIds: string[]): boolean {
+    if (scope === 'return') return true;
+    if (!scope.startsWith('area:')) return false;
+    const area = scope.slice(5);
+    for (const n of nodeIds) {
+      const l = parseLineId(n);
+      if (l && areaOfKey(l.key) === area) return true;
+      for (const d of this.graph.dependents(n, (id) => id.startsWith('line:'))) {
+        const dl = parseLineId(d);
+        if (dl && areaOfKey(dl.key) === area) return true;
       }
     }
+    return false;
   }
 
   /** Record the event on a source and on every line that cites it directly. */

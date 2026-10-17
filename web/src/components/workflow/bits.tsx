@@ -161,6 +161,7 @@ const EVENT_TEXT: Record<string, string> = {
   'assignment.completed': 'completed an assignment',
   'time.logged': 'logged time',
   'sensitive.unmasked': 'viewed a sensitive field',
+  'attachment.opened': 'opened an uploaded file',
   'firm.standards_updated': 'changed the firm standards',
   'events.undone': 'undid an action',
   'filing.step': 'filing step',
